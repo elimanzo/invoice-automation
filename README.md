@@ -103,6 +103,15 @@ Runs with no API key (the fake provider) exactly like the local path above; pass
 `-e XAI_API_KEY=...` to use Grok for real. The documented local path (`pip install -e
 ".[dev]"`, no Docker) still works unchanged — this is an alternative, not a replacement.
 
+## Commit messages
+
+`git config core.hooksPath .githooks` (one-time, local to this clone) turns on a
+`commit-msg` hook that rejects a commit whose subject isn't Conventional Commits
+(`type(scope): subject`, type one of `feat|fix|refactor|test|docs|chore|perf|build|ci`)
+or is a placeholder like `wip`/`fix stuff`. `git config commit.template .gitmessage`
+makes `git commit` (no `-m`) open with the format and a reminder to write *why*, not
+*what* — the diff already shows what.
+
 ## Where things live
 
 | Path | What it is |
@@ -188,4 +197,6 @@ Per [ADR-0006](docs/adr/0006-recorded-responses-for-tests.md):
    invoices plus the authored fixtures) on decision agreement and field accuracy, so a
    prompt change reports "94% to 81%" instead of one opaque red test.
 
-A live smoke test runs only when `XAI_API_KEY` is set, and is skipped otherwise.
+The test suite never calls the real Grok API — it runs entirely against `FakeProvider`/cassette
+replay regardless of whether `XAI_API_KEY` is set. To check the live integration, run the CLI
+manually with `--provider grok` and a real key (see above).

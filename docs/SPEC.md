@@ -336,10 +336,15 @@ One Pydantic state object flows through every node, accumulating: the raw docume
 extracted invoice, corrections, flags, risk score, the decision with reasoning, critique
 history, and the payment record. Nodes are plain functions over this state.
 
-Edges: ingest to validate unconditionally; validate branches conditionally (fatal flag goes
-straight to reject; otherwise approve); approve loops back on itself while the critic
-demands revision, up to the retry cap; approve branches to pay, reject, or interrupt for
-escalation. Backward edges implement the critique loops.
+Edges: ingest to reconcile to validate to approve, all unconditional; approve branches to
+pay, reject (`END`), or interrupt for escalation (`await_review`), which itself branches to
+pay or `END` once a human decides. There is no backward edge anywhere in the graph.
+
+Extraction's and approval's critique loops are not graph cycles — each is a bounded retry
+loop local to its own node (`extraction.py`'s repair/critic pass; `run_approval_agent()`'s
+tool-calling investigation, capped by `APPROVAL_MAX_TOOL_CALLS`). Keeping them inside one
+node call, rather than as graph self-loops, avoids checkpointing every intermediate
+tool-call round-trip — the checkpointer only needs to see a node's final result.
 
 The SQLite checkpointer persists state after every node. This backs three things at once: run
 traces for the drill-down, interrupt-and-resume for escalation, and the dashboard's history.
@@ -455,7 +460,9 @@ Three layers, per ADR-0006:
    overstated. Where a structured document was parsed deterministically its fields are genuine
    ground truth, and the model path can be scored against them.
 
-A live smoke test runs only when `XAI_API_KEY` is present and skips otherwise.
+The test suite never calls the real Grok API — it runs entirely against the fake provider and
+cassette replay regardless of whether `XAI_API_KEY` is present. The live integration is checked
+manually via the CLI (`--provider grok` with a real key), not by an automated test.
 
 ### What gets tested where
 

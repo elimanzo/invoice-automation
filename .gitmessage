@@ -1,0 +1,9 @@
+
+
+
+# type(scope): subject, imperative, <=72 chars, no trailing period
+#
+# Why this change, not what it does line-by-line — the diff already shows what.
+# Wrap body at ~72 chars. Reference a ticket/ADR/issue file if one exists.
+#
+# type: feat | fix | refactor | test | docs | chore | perf | build | ci

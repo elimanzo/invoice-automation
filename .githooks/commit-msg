@@ -1,0 +1,36 @@
+#!/bin/sh
+# Rejects commits whose subject line isn't `type(scope): subject` (Conventional
+# Commits), is too long, ends in a period, or is a placeholder like "wip"/"fix stuff".
+# Installed via `git config core.hooksPath .githooks` (see README). POSIX sh, no
+# Python dependency, so it runs the same under Git Bash on Windows and elsewhere.
+
+msg_file="$1"
+subject=$(grep -v '^#' "$msg_file" | grep -v '^[[:space:]]*$' | head -n1)
+
+types="feat|fix|refactor|test|docs|chore|perf|build|ci"
+
+if [ -z "$subject" ]; then
+    echo "commit-msg: empty commit message" >&2
+    exit 1
+fi
+
+case "$subject" in
+    *.) echo "commit-msg: subject line must not end with a period" >&2; exit 1 ;;
+esac
+
+if ! echo "$subject" | grep -Eq "^($types)(\([A-Za-z0-9._/-]+\))?: .{1,68}$"; then
+    echo "commit-msg: subject must match 'type(scope): subject' (<=68 chars after the prefix)" >&2
+    echo "type one of: $types" >&2
+    echo "got: $subject" >&2
+    exit 1
+fi
+
+body=$(echo "$subject" | sed -E 's/^[^:]+: //' | tr '[:upper:]' '[:lower:]')
+case "$body" in
+    wip|fix|fixup|update|changes|misc|temp|test)
+        echo "commit-msg: subject is a placeholder, be specific: '$body'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
