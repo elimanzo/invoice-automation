@@ -136,7 +136,7 @@ makes `git commit` (no `-m`) open with the format and a reminder to write *why*,
 | Reasoning engine | Grok via xAI's OpenAI-compatible API, behind a provider interface | The only real network call; everything Acme-side is mocked ([ADR-0001](docs/adr/0001-llm-is-the-only-network-dependency.md)) |
 | Ingestion | Structured formats parsed deterministically; the model reads only what needs judgment | A JSON invoice is already extracted; sending it to an LLM adds cost and a hallucination risk ([ADR-0009](docs/adr/0009-deterministic-parsing-for-structured-formats.md)) |
 | Orchestration | LangGraph — nodes, conditional edges, cycles, checkpointer | The workflow is a cyclic graph, not a pipeline ([ADR-0002](docs/adr/0002-langgraph-for-orchestration.md)) |
-| Agents | Four stage agents plus one shared Critic | Critique loops in ingestion and approval |
+| Agents | Four stage agents plus one shared Critic | The brief's "reflection or critique loop": extraction re-checks its own output against the source document and retries on a real problem ([`_critique`](src/invoice_automation/extraction.py)); approval reasons over the invoice and flags before deciding ([ADR-0004](docs/adr/0004-caution-ratchet-for-approval.md)) |
 | Bad data | Auditable corrections: raw, value, reason, confidence | A 30% error rate is not fixed by being confidently wrong more quietly |
 | Approval | Deterministic rules, LLM may only add caution | Invoice text is untrusted input ([ADR-0004](docs/adr/0004-caution-ratchet-for-approval.md)) |
 | Duplicates | Registry keyed on invoice number; revisions supersede | INV-1011 arrives twice; INV-1004 has a revision worth $4,050 |
