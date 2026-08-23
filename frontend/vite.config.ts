@@ -11,7 +11,7 @@ import react from "@vitejs/plugin-react";
 // server has no route for. `/events` is SSE, so it needs `ws: false` (it isn't a
 // websocket) but the proxy must not buffer the stream — `changeOrigin` alone covers
 // both.
-const API_ROUTES = ["/runs", "/reviews", "/status", "/impact", "/events"];
+const API_ROUTES = ["/runs", "/reviews", "/status", "/impact", "/events", "/uploads"];
 
 export default defineConfig({
   plugins: [react()],

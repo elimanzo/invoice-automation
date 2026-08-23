@@ -75,7 +75,9 @@ every document a real answer.
 python -m invoice_automation.web    # http://127.0.0.1:8000
 ```
 
-Pipeline view, ledger, and the review queue for escalated invoices. No Node toolchain
+Pipeline view (with a click-to-upload control — pick one or several files from
+`data/demo_uploads/` to see it work immediately, or any of `data/invoices/`), ledger, and
+the review queue for escalated invoices. No Node toolchain
 required to run it — the React/Vite production bundle is committed under
 `src/invoice_automation/static/` and served as static files
 ([ADR-0008](docs/adr/0008-react-with-committed-bundle.md)). To rebuild it after changing
@@ -128,6 +130,7 @@ makes `git commit` (no `-m`) open with the format and a reminder to write *why*,
 | [docs/adr/](docs/adr/) | Architecture decisions, each with its cost stated |
 | [data/invoices/](data/invoices/) | The 16 provided sample invoices, untouched |
 | [data/invoices_extra/](data/invoices_extra/) | 6 authored fixtures reaching scenarios the provided data doesn't |
+| [data/demo_uploads/](data/demo_uploads/) | 4 files for trying the dashboard's upload control — one clean approve, one stock mismatch, one over-threshold escalation, one fatal rejection |
 
 ## Design in one table
 

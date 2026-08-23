@@ -1,5 +1,11 @@
+import { useRef, useState } from "react";
 import { ConnectionStatus, PipelineRow, usePipelineRuns } from "./usePipelineRuns";
 import { stageLabel } from "./stages";
+import { UploadRejection, uploadDocuments } from "./api";
+
+// Ticket 20: mirrors documents.py's SUPPORTED_EXTENSIONS — kept in sync by hand since
+// the file picker's `accept` attribute is advisory only (the server is the real check).
+const ACCEPTED_EXTENSIONS = ".txt,.json,.csv,.xml,.pdf";
 
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -24,6 +30,56 @@ function ConnectionBanner({ status }: { status: ConnectionStatus }) {
   return <div className="banner banner--warning">{message}</div>;
 }
 
+function UploadControl() {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [rejected, setRejected] = useState<UploadRejection[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    setUploading(true);
+    setError(null);
+    setRejected([]);
+    try {
+      const result = await uploadDocuments(Array.from(fileList));
+      setRejected(result.rejected);
+    } catch {
+      setError("Upload failed. Check your connection and try again.");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  return (
+    <div className="upload-control">
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept={ACCEPTED_EXTENSIONS}
+        onChange={(e) => handleFiles(e.target.files)}
+        className="upload-control__input"
+        id="upload-input"
+      />
+      <label htmlFor="upload-input" className="btn btn--upload">
+        {uploading ? "Uploading…" : "Upload invoice files"}
+      </label>
+      {error && <p className="banner banner--warning">{error}</p>}
+      {rejected.length > 0 && (
+        <ul className="banner banner--warning upload-control__rejections">
+          {rejected.map((r) => (
+            <li key={r.filename}>
+              <strong>{r.filename}</strong>: {r.reason}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function PipelineView() {
   const { rows, status } = usePipelineRuns();
 
@@ -35,10 +91,11 @@ export function PipelineView() {
         one moves along.
       </p>
       <ConnectionBanner status={status} />
+      <UploadControl />
       {rows.length === 0 ? (
         <p className="empty">
-          Nothing is processing right now. New invoices will appear here as soon as
-          they're submitted.
+          Click to upload invoice files. New invoices will appear below once they're
+          submitted.
         </p>
       ) : (
         <table className="pipeline-table">

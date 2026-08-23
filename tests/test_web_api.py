@@ -61,8 +61,8 @@ def checkpointer() -> Any:
 
 
 @pytest.fixture
-def client(api_deps: Deps, checkpointer: Any) -> TestClient:
-    app = create_app(api_deps, checkpointer)
+def client(api_deps: Deps, checkpointer: Any, tmp_path: Path) -> TestClient:
+    app = create_app(api_deps, checkpointer, tmp_path / "uploads")
     return TestClient(app)
 
 
@@ -97,7 +97,7 @@ def _escalating_client(
     deps: Deps, checkpointer: Any, tmp_path: Path
 ) -> tuple[TestClient, Deps, Path]:
     scoped = _escalating_deps(deps, tmp_path, "escalate_me")
-    app = create_app(scoped, checkpointer)
+    app = create_app(scoped, checkpointer, tmp_path / "uploads")
     return TestClient(app), scoped, tmp_path / "docs" / "escalate_me.txt"
 
 
@@ -250,10 +250,10 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def live_server(api_deps: Deps, checkpointer: Any) -> Iterator[str]:
+def live_server(api_deps: Deps, checkpointer: Any, tmp_path: Path) -> Iterator[str]:
     """A real uvicorn server on a background thread, for the one test that needs
     actual socket-level streaming rather than TestClient's fully-buffered transport."""
-    app = create_app(api_deps, checkpointer)
+    app = create_app(api_deps, checkpointer, tmp_path / "uploads")
     port = _free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
     server = uvicorn.Server(config)

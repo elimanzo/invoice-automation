@@ -49,6 +49,9 @@ views plus a drill-down.
    line, so that I can handle a one-off without opening a UI.
 2. As an AP clerk, I want to process a whole directory of invoices in one command, so that I
    can clear an inbox in one pass.
+2a. As an AP clerk, I want to upload one or several invoice files from the dashboard in my
+    browser, so that I can start processing without knowing a server file path exists
+    (ticket 20).
 3. As an AP clerk, I want plain-text, JSON, CSV, XML, and PDF documents all accepted, so that
    I never have to convert a file by hand first.
 4. As an AP clerk, I want the system to read an emailed message body as an invoice, so that
@@ -326,6 +329,10 @@ Confirmed with the developer before writing this spec:
   reconciliation) are called directly in tests. No injection needed.
 - **HTTP** via FastAPI's TestClient for the dashboard API, which delegates to the primary
   seam.
+- **`POST /uploads`** (ticket 20) validates and stores what a clerk submits from the browser,
+  then hands the resulting directory to the same `run_batch` call `directory_path` already
+  makes — a single-file upload is a batch of one, not a second pipeline path. See ADR-0011
+  for the retention/storage decision.
 
 Rule: behaviour is asserted at the primary seam; the pure-function tests cover mechanical
 string and number handling only. Tests do not attach to module internals.

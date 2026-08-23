@@ -19,8 +19,9 @@ from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterator
+from uuid import uuid4
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -31,6 +32,7 @@ from .batch import BatchSummary, run_batch
 from .config import MANUAL_COST_PER_INVOICE_USD, MANUAL_PROCESSING_DAYS
 from .deps import Deps
 from .documents import (
+    SUPPORTED_EXTENSIONS,
     UndecodableDocument,
     UnreadableDocument,
     UnsupportedDocument,
@@ -233,6 +235,21 @@ class TriggerResponse(BaseModel):
     document_name: str | None = None
 
 
+# Ticket 20: files this endpoint rejects before they're ever written to disk, so a clerk
+# sees exactly why in the same response instead of a silent later failure.
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+class UploadRejection(BaseModel):
+    filename: str
+    reason: str
+
+
+class UploadResponse(BaseModel):
+    accepted: list[str]
+    rejected: list[UploadRejection]
+
+
 def _config_for(document_name: str) -> RunnableConfig:
     return {"configurable": {"thread_id": document_name}}
 
@@ -328,11 +345,14 @@ def _to_detail(document_name: str, snapshot: Any, deps: Deps) -> RunDetail:
     )
 
 
-def create_app(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> FastAPI:
+def create_app(
+    deps: Deps, checkpointer: BaseCheckpointSaver[Any], uploads_dir: Path
+) -> FastAPI:
     """Build the FastAPI app. `deps` and `checkpointer` are shared across every request
     the same way the CLI shares one `Deps` and one on-disk checkpointer across a whole
     invocation — a run triggered here and a run inspected here read and write the same
-    state."""
+    state. `uploads_dir` is where ticket 20's `/uploads` endpoint persists what a clerk
+    submits (ADR-0011); it is never read from except by that endpoint."""
     bus = RunEventBus()
     observed_deps = replace(deps, tracer=_BroadcastingTracer(deps.tracer, bus))
 
@@ -446,6 +466,81 @@ def create_app(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"no such directory: {directory}")
         background_tasks.add_task(_process_directory, directory)
         return TriggerResponse(status="processing", document_name=None)
+
+    @app.post("/uploads", status_code=202)
+    def upload_documents(
+        background_tasks: BackgroundTasks, files: list[UploadFile] = File(...)
+    ) -> UploadResponse:
+        """Ticket 20: a clerk-facing alternative to path-based `/runs`. Every accepted
+        file in this one request lands in a single fresh directory and is handed to
+        `run_batch` exactly as `directory_path` already is — a single-file upload is
+        simply a batch of one, not a second pipeline path (ADR-0011)."""
+        if not files:
+            raise HTTPException(status_code=422, detail="no files were uploaded")
+
+        accepted: list[str] = []
+        rejected: list[UploadRejection] = []
+        to_write: list[tuple[str, bytes]] = []
+        seen_names: set[str] = set()
+        for upload in files:
+            raw_name = upload.filename or "unnamed"
+            # `Path(...).name` strips any directory component a hostile or malformed
+            # filename might carry (e.g. "../../etc/passwd") — every accepted file is
+            # written under `batch_dir` by name alone, so this is what keeps a write
+            # confined to it.
+            name = Path(raw_name).name
+            if not name or name in (".", ".."):
+                rejected.append(UploadRejection(filename=raw_name, reason="invalid filename"))
+                continue
+
+            if name in seen_names:
+                rejected.append(
+                    UploadRejection(filename=name, reason="duplicate filename in this upload")
+                )
+                continue
+
+            suffix = Path(name).suffix.lower()
+            if suffix not in SUPPORTED_EXTENSIONS:
+                rejected.append(
+                    UploadRejection(
+                        filename=name,
+                        reason=(
+                            f"{suffix or 'no extension'} isn't a supported invoice format. "
+                            f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+                        ),
+                    )
+                )
+                continue
+
+            # Check size via seek/tell before reading the body into memory, so a
+            # rejected oversized file never gets fully buffered.
+            upload.file.seek(0, 2)
+            size = upload.file.tell()
+            upload.file.seek(0)
+            if size > MAX_UPLOAD_BYTES:
+                rejected.append(
+                    UploadRejection(
+                        filename=name,
+                        reason=(
+                            f"file is {size / 1_000_000:.1f} MB, over the "
+                            f"{MAX_UPLOAD_BYTES // 1_000_000} MB limit"
+                        ),
+                    )
+                )
+                continue
+
+            seen_names.add(name)
+            to_write.append((name, upload.file.read()))
+
+        if to_write:
+            batch_dir = uploads_dir / uuid4().hex
+            batch_dir.mkdir(parents=True, exist_ok=True)
+            for name, content in to_write:
+                (batch_dir / name).write_bytes(content)
+                accepted.append(name)
+            background_tasks.add_task(_process_directory, batch_dir)
+
+        return UploadResponse(accepted=accepted, rejected=rejected)
 
     @app.get("/status")
     def get_status() -> StatusSummary:
