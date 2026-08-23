@@ -4,10 +4,11 @@ A multi-agent system that takes a supplier invoice from a messy document to a pa
 rejected, or escalated) obligation — ingestion, validation against inventory, rule-plus-LLM
 approval, and payment.
 
-> **Status: in progress.** Ticket 01 of 18 is complete — a document becomes a structured
-> invoice. Validation, approval, payment, and the dashboard are still to come, so this README
-> gets replaced with the full walkthrough and generated architecture diagram once the pipeline
-> runs end to end.
+> **Status: in progress.** Tickets 01–02 of 18 are complete — a document flows through all
+> four stages (ingest, validate, approve, pay) and the brief's command works end to end for
+> both an approved and an escalated invoice. The dashboard, reconciliation, and the richer
+> validation/approval rules are still to come, so this README gets replaced with the full
+> walkthrough and generated architecture diagram once the pipeline is feature-complete.
 
 ## Quickstart
 
@@ -15,6 +16,7 @@ approval, and payment.
 python -m venv .venv && .venv/Scripts/activate    # or: source .venv/bin/activate
 pip install -e ".[dev]"
 python main.py --invoice_path=data/invoices/invoice_1001.txt
+python main.py --invoice_path=data/invoices/invoice_1013.json   # over $10K: escalated
 ```
 
 No API key needed. Without one the system uses a fake reasoning provider that replays
@@ -26,7 +28,7 @@ The inventory catalogue creates and seeds itself on first run. `python main.py
 --seed-catalogue` resets it deliberately.
 
 ```bash
-pytest          # 17 tests, no network, no credentials
+pytest          # 39 tests, no network, no credentials
 mypy            # strict, src and tests
 ```
 

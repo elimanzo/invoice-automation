@@ -7,15 +7,22 @@ command anyone runs and it must work verbatim.
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
+
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .catalogue import seed_catalogue
 from .config import Settings
 from .deps import build_deps
 from .documents import UndecodableDocument, UnsupportedDocument, load_document
-from .extraction import ExtractionFailed, extract_invoice
-from .models import Invoice
+from .graph import RunResult, run_invoice
+from .models import Decision, Flag, Invoice
+from .payments import PaymentResult
+
+CHECKPOINT_FILENAME = "checkpoints.db"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,20 +70,38 @@ def main(argv: list[str] | None = None) -> int:
 
     deps = build_deps(settings)
 
-    try:
-        invoice = extract_invoice(document, deps)
-    except (ExtractionFailed, LookupError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+    checkpoint_path = Path(settings.data_dir) / CHECKPOINT_FILENAME
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(checkpoint_path, check_same_thread=False)) as conn:
+        checkpointer = SqliteSaver(conn)
+        try:
+            result = run_invoice(document, deps, checkpointer=checkpointer)
+        except LookupError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
-    print(render(invoice, document_name=document.name))
+    print(render(result, document_name=document.name))
     return 0
 
 
-def render(invoice: Invoice, *, document_name: str) -> str:
-    """Human-readable rendering of an extracted invoice."""
+def render(result: RunResult, *, document_name: str) -> str:
+    """Human-readable rendering of a run's outcome."""
+    assert result.invoice is not None  # run_invoice raises before this point otherwise
+    lines = [f"Document:  {document_name}", *_invoice_lines(result.invoice), ""]
+
+    lines.append("Flags:")
+    lines += [f"  [{flag.severity.value:>5}] {flag.message}" for flag in result.flags] or [
+        "  (none)"
+    ]
+    lines.append("")
+
+    lines += _decision_lines(result.decision)
+    lines += _payment_lines(result.payment)
+    return "\n".join(lines)
+
+
+def _invoice_lines(invoice: Invoice) -> list[str]:
     lines = [
-        f"Document:  {document_name}",
         f"Invoice:   {invoice.invoice_number or '(none stated)'}",
         f"Vendor:    {invoice.vendor.name or '(none stated)'}",
         f"Dated:     {invoice.invoice_date or '(none stated)'}",
@@ -101,7 +126,23 @@ def render(invoice: Invoice, *, document_name: str) -> str:
     ]
     if invoice.purchase_order_reference:
         lines.append(f"PO ref:    {invoice.purchase_order_reference}")
-    return "\n".join(lines)
+    return lines
+
+
+def _decision_lines(decision: Decision | None) -> list[str]:
+    if decision is None:
+        return ["Decision:  (none)"]
+    return [
+        f"Decision:  {decision.outcome.upper()}",
+        f"Reasoning: {decision.reasoning}",
+        "",
+    ]
+
+
+def _payment_lines(payment: PaymentResult | None) -> list[str]:
+    if payment is None:
+        return ["Payment:   not made"]
+    return [f"Payment:   {payment.status} ({payment.reference})"]
 
 
 def _money(value: object) -> str:

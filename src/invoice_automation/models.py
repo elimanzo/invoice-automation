@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
@@ -114,3 +115,51 @@ class Invoice(BaseModel):
         if self.unpriced_line_count:
             return None
         return sum((item.amount or Decimal(0) for item in self.line_items), Decimal(0))
+
+
+class FlagSeverity(StrEnum):
+    """How a flag affects control flow.
+
+    fatal rejects the invoice and it never reaches payment. soft does not block, but
+    contributes to the risk score. info is recorded only. See CONTEXT.md.
+    """
+
+    FATAL = "fatal"
+    SOFT = "soft"
+    INFO = "info"
+
+
+class Flag(BaseModel):
+    """A finding about an invoice, raised by validation or approval."""
+
+    model_config = ConfigDict(frozen=True)
+
+    severity: FlagSeverity
+    code: str = Field(description="Short machine-stable identifier, e.g. 'stock_exceeded'")
+    message: str = Field(description="Human-readable explanation, naming the specifics")
+
+
+class Correction(BaseModel):
+    """A record that the system stored something different from what a document said.
+
+    Written for every mutation, always — an audit trail, not an exception path. See
+    CONTEXT.md. Repair itself arrives with ticket 06; this model exists now so the
+    primary seam's return shape does not change shape later.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    field: str
+    raw: str
+    value: str
+    reason: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class Decision(BaseModel):
+    """The outcome of approval."""
+
+    model_config = ConfigDict(frozen=True)
+
+    outcome: Literal["approved", "rejected", "escalated"]
+    reasoning: str

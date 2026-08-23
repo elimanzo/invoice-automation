@@ -16,7 +16,7 @@ def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("XAI_API_KEY", raising=False)
 
 
-def test_invoice_path_prints_the_extracted_invoice(
+def test_invoice_path_runs_the_pipeline_end_to_end(
     invoices_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     exit_code = main([f"--invoice_path={invoices_dir / 'invoice_1001.txt'}"])
@@ -28,6 +28,34 @@ def test_invoice_path_prints_the_extracted_invoice(
     assert "WidgetA" in output
     assert "WidgetB" in output
     assert "5000.00" in output
+    assert "Decision:  APPROVED" in output
+    assert "Payment:   success" in output
+
+
+def test_an_over_threshold_invoice_is_reported_as_escalated_with_no_payment(
+    invoices_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = main([f"--invoice_path={invoices_dir / 'invoice_1013.json'}"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Decision:  ESCALATED" in output
+    assert "Payment:   not made" in output
+
+
+def test_a_run_leaves_a_checkpoint_trace_a_second_run_can_extend(
+    invoices_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two separate CLI invocations must not clash over the same checkpoint database."""
+    path = invoices_dir / "invoice_1001.txt"
+
+    first = main([f"--invoice_path={path}"])
+    capsys.readouterr()
+    second = main([f"--invoice_path={path}"])
+
+    assert first == 0
+    assert second == 0
+    assert "APPROVED" in capsys.readouterr().out
 
 
 def test_a_missing_document_is_an_error_not_a_traceback(
