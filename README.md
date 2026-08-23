@@ -16,7 +16,7 @@ approval, and payment.
 python -m venv .venv && .venv/Scripts/activate    # or: source .venv/bin/activate
 pip install -e ".[dev]"
 python main.py --invoice_path=data/invoices/invoice_1001.txt
-python main.py --invoice_path=data/invoices/invoice_1013.json   # over $10K: escalated
+python main.py --invoice_path=data/invoices/invoice_1013.json   # aggregated stock exceeded: rejected
 ```
 
 No API key needed. Without one the system uses a fake reasoning provider that replays

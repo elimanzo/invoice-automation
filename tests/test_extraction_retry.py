@@ -27,6 +27,8 @@ class _ScriptedProvider:
 
     def structured(self, call: StructuredCall) -> dict[str, Any]:
         self.calls.append(call)
+        if call.kind == "critique":
+            return {"problem_found": False, "explanation": None}
         return self._payloads.pop(0)
 
 
@@ -56,10 +58,12 @@ def test_a_non_numeric_quantity_triggers_a_retry_that_then_succeeds(
         registry=deps.registry,
     )
 
-    invoice = extract_invoice(_document(tmp_path), scoped_deps)
+    invoice = extract_invoice(_document(tmp_path), scoped_deps).invoice
 
     assert invoice.line_items[0].quantity == 5
-    assert len(provider.calls) == 2
+    # Two extraction attempts (bad, then good) plus one critique call on the attempt
+    # that finally validated.
+    assert len(provider.calls) == 3
     # The retry must actually carry feedback, not just repeat the same prompt.
     assert provider.calls[1].user != provider.calls[0].user
     assert "REJECTED" in provider.calls[1].user
@@ -83,11 +87,15 @@ def test_exhausting_the_retry_cap_raises_extraction_failed(tmp_path: Path, deps:
     assert len(provider.calls) == 2
 
 
-def test_the_clean_invoice_still_needs_exactly_one_call(invoices_dir: Path, deps: Deps) -> None:
-    """The common case must not pay the cost of the retry machinery."""
+def test_the_clean_invoice_needs_exactly_one_extraction_and_one_critique_call(
+    invoices_dir: Path, deps: Deps
+) -> None:
+    """The common case must not pay the cost of the retry machinery — one extraction
+    call, one critique call, nothing more."""
     from invoice_automation.providers import FakeProvider
 
     assert isinstance(deps.provider, FakeProvider)
     extract_invoice(load_document(invoices_dir / "invoice_1001.txt"), deps)
 
-    assert len(deps.provider.calls) == 1
+    assert len(deps.provider.calls) == 2
+    assert [call.kind for call in deps.provider.calls] == ["extract", "critique"]

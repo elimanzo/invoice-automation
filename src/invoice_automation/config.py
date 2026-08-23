@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from decimal import Decimal
 
 # Named here rather than inline so `.env.example` and this module cannot drift.
 ENV_API_KEY = "XAI_API_KEY"
@@ -31,6 +32,45 @@ DEFAULT_EXTRACTION_MAX_ATTEMPTS = 2
 
 class MissingApiKey(Exception):
     """A real provider was requested but no API key is configured."""
+
+
+class UnknownCurrency(Exception):
+    """An invoice states a currency this system has no conversion rate for."""
+
+
+# USD per one unit of the currency, e.g. 1 EUR = 1.08 USD. Only currencies actually
+# appearing in the sample data are listed; ticket 07's own ADR notes this changes no
+# outcome there (INV-1014's EUR total converts to well under the scrutiny threshold
+# either way) — it exists so the comparison is correct on principle, not by accident.
+FX_RATES_TO_USD: dict[str, Decimal] = {
+    "USD": Decimal("1.00"),
+    "EUR": Decimal("1.08"),
+}
+
+# What a soft flag costs toward the risk score, by flag code. A flag with no entry here
+# contributes nothing — fatal flags reject outright before risk is ever computed, and
+# info flags are visibility only.
+RISK_WEIGHTS: dict[str, int] = {
+    "unknown_vendor": 3,
+    "unknown_item": 3,
+    "empty_vendor": 3,
+    "price_above_expected": 3,
+    "price_above_expected_documented": 1,
+    "non_usd_currency": 1,
+    "due_date_before_invoice_date": 2,
+    "due_date_in_the_past": 2,
+}
+
+# Crossed by compounding soft flags, not by any single one alone — this is what makes
+# INV-1008 (unknown vendor, two uncatalogued items, $9,900 — just under the dollar
+# threshold) escalate on judgement rather than sail through on a technicality.
+RISK_ESCALATION_THRESHOLD = 5
+
+# The approval agent's investigation is bounded: this many tool calls before it must
+# conclude. Exhausting the bound without a conclusion fails closed — the deterministic
+# rule-based decision stands unchanged, never guessed at from an inconclusive
+# investigation.
+APPROVAL_MAX_TOOL_CALLS = 4
 
 
 def _env(name: str, default: str) -> str:

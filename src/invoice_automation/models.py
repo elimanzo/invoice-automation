@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
@@ -163,3 +163,14 @@ class Decision(BaseModel):
 
     outcome: Literal["approved", "rejected", "escalated"]
     reasoning: str
+
+
+class ToolCallRecord(BaseModel):
+    """One read-only tool call the approval agent made, and what it got back — the
+    trace ticket 08 asks for, so an investigation can be inspected after the fact."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    arguments: dict[str, Any]
+    result: dict[str, Any]

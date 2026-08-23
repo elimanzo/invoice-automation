@@ -86,6 +86,18 @@ def test_the_call_forces_the_tool_and_names_the_model() -> None:
     assert kwargs["tools"][0]["function"]["parameters"] == {"type": "object"}
 
 
+def test_temperature_is_zero_for_deterministic_extraction() -> None:
+    """Found live: the same document read correctly on one call and had a field
+    dropped on an identical one. Extraction is reading comprehension, not creative
+    writing, and it needs a fixed sampling temperature to behave like it."""
+    client = _FakeClient(_tool_call_response("{}"))
+    provider = GrokProvider(api_key="k", base_url="https://api.x.ai/v1", model="grok-4", client=client)  # type: ignore[arg-type]
+
+    provider.structured(_call())
+
+    assert client.calls[0]["temperature"] == 0
+
+
 def test_no_tool_call_is_a_malformed_response() -> None:
     client = _FakeClient(_no_tool_call_response("I'd rather just describe it in prose."))
     provider = GrokProvider(api_key="k", base_url="https://api.x.ai/v1", model="grok-4", client=client)  # type: ignore[arg-type]

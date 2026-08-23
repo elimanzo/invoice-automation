@@ -23,6 +23,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -31,12 +32,13 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
-from .approval import decide
+from .approval import decide, run_approval_agent
 from .deps import Deps
 from .documents import Document
 from .extraction import extract_invoice
-from .models import Correction, Decision, DocumentFormat, Flag, Invoice
+from .models import Correction, Decision, DocumentFormat, Flag, Invoice, ToolCallRecord
 from .payments import PaymentResult
+from .registry import DuplicatePayment, normalize_invoice_identity
 from .structured_parsing import StructuredParseFailed, parse_structured
 from .validation import validate_invoice
 
@@ -61,6 +63,13 @@ class PipelineState(TypedDict, total=False):
     extraction_method: str
     """Which path ingestion took: "deterministic" or "model" (ADR-0009). Recorded so a
     run's trace can show it without downstream code needing to care which one ran."""
+    usd_total: str | None
+    """The invoice total converted to USD (validation.py), for approval's dollar
+    threshold. A string, like every other JSON-shaped state field — approval parses it
+    back to Decimal at its own boundary, same as invoice and flags."""
+    tool_calls: list[dict[str, Any]]
+    """Every read-only tool call the approval agent made, in order, with its arguments
+    and result — the investigation trace ticket 08 asks for."""
 
 
 @dataclass(frozen=True)
@@ -73,6 +82,7 @@ class RunResult:
     payment: PaymentResult | None
     corrections: list[Correction]
     extraction_method: str
+    tool_calls: list[ToolCallRecord]
 
 
 def _ingest(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
@@ -92,21 +102,52 @@ def _ingest(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
         except StructuredParseFailed:
             pass  # Falls through to model extraction below.
 
-    invoice = extract_invoice(document, deps)
-    return {"invoice": invoice.model_dump(mode="json"), "extraction_method": "model"}
+    result = extract_invoice(document, deps)
+    return {
+        "invoice": result.invoice.model_dump(mode="json"),
+        "extraction_method": "model",
+        "corrections": [c.model_dump(mode="json") for c in result.corrections],
+        # Extraction-stage flags (e.g. an unresolvable due date) start the flags list;
+        # validate appends to it rather than replacing it, so neither stage's findings
+        # overwrite the other's.
+        "flags": [f.model_dump(mode="json") for f in result.flags],
+    }
 
 
 def _validate(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     invoice = Invoice.model_validate(state["invoice"])
-    flags = validate_invoice(invoice, deps)
-    return {"flags": [flag.model_dump(mode="json") for flag in flags]}
+    existing_flags = [Flag.model_validate(f) for f in state.get("flags", [])]
+    existing_corrections = [Correction.model_validate(c) for c in state.get("corrections", [])]
+
+    result = validate_invoice(invoice, deps)
+
+    return {
+        "flags": [f.model_dump(mode="json") for f in existing_flags + result.flags],
+        "corrections": [
+            c.model_dump(mode="json") for c in existing_corrections + result.corrections
+        ],
+        "usd_total": str(result.usd_total) if result.usd_total is not None else None,
+    }
 
 
-def _approve(state: PipelineState) -> dict[str, Any]:
+def _approve(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     invoice = Invoice.model_validate(state["invoice"])
     flags = [Flag.model_validate(f) for f in state.get("flags", [])]
-    decision = decide(invoice, flags)
-    return {"decision": decision.model_dump(mode="json")}
+    usd_total_str = state.get("usd_total")
+    usd_total = Decimal(usd_total_str) if usd_total_str is not None else None
+
+    rule_decision = decide(invoice, flags, usd_total=usd_total)
+
+    if rule_decision.outcome == "rejected":
+        # The ratchet forbids downgrading a rejection, so the agent call cannot change
+        # anything here — it is not made at all, not made and then ignored.
+        return {"decision": rule_decision.model_dump(mode="json"), "tool_calls": []}
+
+    decision, tool_calls = run_approval_agent(invoice, flags, usd_total, rule_decision, deps)
+    return {
+        "decision": decision.model_dump(mode="json"),
+        "tool_calls": [tc.model_dump(mode="json") for tc in tool_calls],
+    }
 
 
 def _pay(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
@@ -124,8 +165,37 @@ def _pay(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     total = invoice.total if invoice.total is not None else invoice.line_items_total
     assert total is not None  # approval could not have approved without one
 
+    identity = normalize_invoice_identity(invoice.invoice_number)
+    if identity is not None and deps.registry.payment_recorded(identity):
+        # Idempotency: a prior run already paid this identity. Reprocessing the same
+        # document (or a batch run over the same directory a second time) must not pay
+        # it again — the mock payment function is never called here.
+        return {
+            "payment": {
+                "status": "skipped",
+                "reference": None,
+                "detail": f"already paid under identity {identity!r}",
+            }
+        }
+
     result = deps.payment.pay(invoice.vendor.name, total, invoice.currency)
-    return {"payment": {"status": result.status, "reference": result.reference}}
+    if identity is not None:
+        try:
+            deps.registry.record_payment(identity, invoice.vendor.name, total)
+        except DuplicatePayment:
+            # The check above and this write are not atomic, but nothing in this
+            # sequential, single-threaded pipeline can run between them (ADR-0002 —
+            # concurrency is a documented gap, not solved here). This branch is a
+            # backstop the storage-layer UNIQUE constraint provides for free, not a
+            # race this code is actually exposed to.
+            pass
+    return {
+        "payment": {
+            "status": result.status,
+            "reference": result.reference,
+            "detail": result.detail,
+        }
+    }
 
 
 def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> Any:
@@ -134,7 +204,7 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> Any:
     builder = StateGraph(PipelineState)
     builder.add_node("ingest", lambda state: _ingest(state, deps=deps))
     builder.add_node("validate", lambda state: _validate(state, deps=deps))
-    builder.add_node("approve", _approve)
+    builder.add_node("approve", lambda state: _approve(state, deps=deps))
     builder.add_node("pay", lambda state: _pay(state, deps=deps))
 
     builder.add_edge(START, "ingest")
@@ -200,4 +270,5 @@ def run_invoice(
         payment=PaymentResult(**final["payment"]) if final.get("payment") else None,
         corrections=[Correction.model_validate(c) for c in final.get("corrections", [])],
         extraction_method=final.get("extraction_method", "model"),
+        tool_calls=[ToolCallRecord.model_validate(tc) for tc in final.get("tool_calls", [])],
     )

@@ -11,12 +11,30 @@ What exists here is the identity and payment record those depend on.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+_INVOICE_NUMBER = re.compile(r"(?:INV[-\s#]*)?(\d+)", re.IGNORECASE)
+
+
+def normalize_invoice_identity(invoice_number: str | None) -> str | None:
+    """The canonical identity a payment is keyed on.
+
+    "INV-1002" and a bare "1002" (invoice_1002.txt states it without the usual prefix)
+    must be the same identity, or formatting alone would defeat idempotency. Keeping
+    just the digit sequence is what makes that true. Vendor as a tiebreak when there's
+    no number at all is ticket 10's job (reconciliation); here, no number means no
+    identity to key on, and the caller decides what that means for payment.
+    """
+    if invoice_number is None or not invoice_number.strip():
+        return None
+    match = _INVOICE_NUMBER.search(invoice_number)
+    return match.group(1) if match is not None else invoice_number.strip()
 
 
 class DuplicatePayment(Exception):
@@ -38,6 +56,12 @@ class Registry(Protocol):
 
     def record_payment(self, invoice_number: str, vendor: str, amount: Decimal) -> None:
         """Record a payment. Raises DuplicatePayment for an identity already paid."""
+        ...
+
+    def payments(self) -> list[PaymentRecord]:
+        """Every payment made. Read-only history — ticket 08's approval agent uses
+        this to build a vendor's prior-payment record; nothing in the pipeline writes
+        through it."""
         ...
 
 
