@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RunDetail, StageTransitionEvent, getRun, listRuns } from "./api";
 
-export interface PipelineRow {
+export type PipelineRow = {
   documentName: string;
   stage: string;
   running: boolean;
@@ -11,7 +11,7 @@ export interface PipelineRow {
   amount: string | null;
   currency: string | null;
   elapsedMs: number;
-}
+};
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting";
 

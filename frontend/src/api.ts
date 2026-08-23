@@ -2,7 +2,7 @@
 // Nothing here reimplements pipeline logic — every shape mirrors a Pydantic model
 // on the server so the two stay in lockstep by construction.
 
-export interface RunSummary {
+export type RunSummary = {
   document_name: string;
   outcome: string | null;
   amount: string | null;
@@ -12,25 +12,25 @@ export interface RunSummary {
   vendor: string | null;
   correction_count: number;
   max_flag_severity: string | null;
-}
+};
 
-export interface StageRecord {
+export type StageRecord = {
   stage: string;
   duration_ms: number;
   ok: boolean;
   detail: string | null;
-}
+};
 
-export interface LineItem {
+export type LineItem = {
   item: string;
   quantity: number;
   unit_price: string | null;
   stated_amount: string | null;
   note: string | null;
   amount: string | null;
-}
+};
 
-export interface Invoice {
+export type Invoice = {
   invoice_number: string | null;
   vendor: { name: string; address: string | null };
   invoice_date: string | null;
@@ -44,29 +44,29 @@ export interface Invoice {
   purchase_order_reference: string | null;
   notes: string | null;
   revision: string | null;
-}
+};
 
-export interface Flag {
+export type Flag = {
   severity: "fatal" | "soft" | "info";
   code: string;
   message: string;
-}
+};
 
-export interface Correction {
+export type Correction = {
   field: string;
   raw: string;
   value: string;
   reason: string;
   confidence: number;
-}
+};
 
-export interface ToolCallRecord {
+export type ToolCallRecord = {
   name: string;
   arguments: Record<string, unknown>;
   result: Record<string, unknown>;
-}
+};
 
-export interface LlmCallRecord {
+export type LlmCallRecord = {
   kind: string;
   cache_hit: boolean;
   latency_ms: number;
@@ -75,14 +75,14 @@ export interface LlmCallRecord {
   cost_usd: string;
   prompt: string;
   response: string;
-}
+};
 
-export interface HumanReview {
+export type HumanReview = {
   outcome: "approved" | "rejected";
   reason: string;
-}
+};
 
-export interface RunDetail {
+export type RunDetail = {
   document_name: string;
   document_format: string | null;
   raw_text: string | null;
@@ -96,9 +96,9 @@ export interface RunDetail {
   llm_calls: LlmCallRecord[];
   risk_score: number;
   awaiting_review: boolean;
-}
+};
 
-export interface ImpactSummary {
+export type ImpactSummary = {
   invoices_processed: number;
   avg_processing_ms: number;
   manual_baseline_days: number;
@@ -106,14 +106,14 @@ export interface ImpactSummary {
   dollars_flagged: string;
   cost_per_invoice_usd: string;
   manual_cost_per_invoice_usd: string;
-}
+};
 
-export interface StageTransitionEvent {
+export type StageTransitionEvent = {
   run_id: string;
   stage: string;
   transition: "enter" | "leave";
   ok?: boolean;
-}
+};
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
