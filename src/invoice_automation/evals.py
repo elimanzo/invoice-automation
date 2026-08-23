@@ -318,3 +318,31 @@ def _field(name: str, expected: str, actual: str | None, *, numeric: bool = Fals
         except InvalidOperation:
             matched = False
     return FieldScore(field=name, expected=expected, actual=actual, matched=matched)
+
+
+def _main() -> int:
+    """`python -m invoice_automation.evals` — the harness as a command, so checking
+    the golden set's scores doesn't require writing a throwaway script. Uses whatever
+    provider `build_deps` would pick (Grok if `XAI_API_KEY` is set, the fake provider
+    otherwise), same as the CLI."""
+    from .config import MissingApiKey, Settings
+    from .deps import build_deps
+    from .structured_logging import configure_logging
+
+    configure_logging()
+    try:
+        deps = build_deps(Settings.from_env())
+    except MissingApiKey as exc:
+        print(f"error: {exc}")
+        return 1
+
+    report = run_eval(deps)
+    print(report.summary())
+    for case in report.scored:
+        if case.decision_matched is False or any(not fs.matched for fs in case.field_scores):
+            print(f"  disagreement: {case.document_name} — {case.note}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

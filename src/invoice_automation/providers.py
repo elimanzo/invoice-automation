@@ -229,7 +229,13 @@ class FakeProvider:
     an empty response set: that raises at construction rather than failing later with a
     confusing per-document error.
 
-    Ticket 18 replaces these responses with real recorded ones. The lookup does not change.
+    Ticket 18 adds a second, larger set of real recorded responses — `tests/cassettes/`
+    — for the "recorded" test layer (ADR-0006), loaded through this same constructor.
+    The package's own bundled fixtures here (`sample_responses/`, still hand-written)
+    are deliberately left as-is: they only back the CLI's two no-key quickstart
+    examples and a handful of unit tests, and swapping them for real model output
+    would risk changing what those examples print for no requirement that asked for
+    it. The lookup does not change either way.
     """
 
     responses: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -292,6 +298,51 @@ class FakeProvider:
 
 class MissingRecording(LookupError):
     """No recorded response exists for this document."""
+
+
+@dataclass
+class RecordingProvider:
+    """Wraps a real `Provider` and captures every `structured()` call in the exact
+    shape `FakeProvider.with_sample_responses` reads back (ticket 18) — cassette
+    recording and cassette replay are one format, one loader, no translation step.
+
+    Only used by `scripts/record_cassettes.py`; nothing in the pipeline constructs
+    this. `converse()` passes straight through uninstrumented — the approval agent's
+    tool-calling conversation is not cassette-replayed (see the ticket 18 note in
+    `docs/adr/0006-recorded-responses-for-tests.md`), so there is nothing here worth
+    recording for it.
+    """
+
+    inner: Provider
+    responses: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Keyed exactly like `FakeProvider.responses`: the document stem, or
+    `f"{stem}.critique"` for a critique call."""
+    fingerprints: dict[str, str] = field(default_factory=dict)
+    """The same keys, mapped to a content hash of the request that produced the
+    response — what a staleness check compares against a freshly-built request to
+    tell whether a prompt changed since recording."""
+
+    def structured(self, call: StructuredCall) -> dict[str, Any]:
+        result = self.inner.structured(call)
+        key = Path(call.document_id).stem
+        if call.kind == "critique":
+            key = f"{key}.critique"
+        self.responses[key] = result
+        self.fingerprints[key] = request_fingerprint(call)
+        return result
+
+    def converse(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> AssistantTurn:
+        return cast(ToolCallingProvider, self.inner).converse(messages, tools)
+
+
+def request_fingerprint(call: StructuredCall) -> str:
+    """A stable hash of everything about `call` that would change the answer, used to
+    detect a cassette recorded against a since-changed prompt or schema. Deliberately
+    excludes `document_id`/`kind` — those select *which* cassette entry to compare,
+    they aren't part of what the model was asked."""
+    return hash_request({"system": call.system, "user": call.user, "schema": call.schema})
 
 
 # ---------------------------------------------------------------------------
