@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
 import { RunDetail, RunSummary, getRun, listReviews, submitReview } from "./api";
-import { severityClassName } from "./severity";
+import { severityClassName, severityTooltip } from "./severity";
 import { usePolled } from "./usePolled";
 
 // Ticket 16: a VP's one screen for invoices that need judgement. Reviews are shown in
 // full — extracted data, corrections, flags, risk score, and the plain reason the rules
 // escalated it (`decision.reasoning`, from approval.py's `decide()`) — so a decision can
 // be made without opening the source document, though it stays one click away.
+
+// Mirrors config.py's RISK_ESCALATION_THRESHOLD — only used to color the badge, never to
+// decide anything; the server has already made that call by the time an invoice reaches
+// this queue.
+const RISK_ESCALATION_THRESHOLD = 5;
 
 function reviewDetails(summaries: RunSummary[]): Promise<RunDetail[]> {
   return Promise.all(summaries.map((s) => getRun(s.document_name)));
@@ -46,11 +51,16 @@ function ReviewCard({
     <div className="review-card">
       <div className="review-card__header">
         <h2>{detail.document_name}</h2>
-        <span className="risk-score">Risk score {detail.risk_score}</span>
+        <span
+          className={`risk-score${detail.risk_score >= RISK_ESCALATION_THRESHOLD ? " risk-score--elevated" : ""}`}
+          title="How much this invoice's combined flags concern the system — 5 or higher forces review on its own."
+        >
+          Risk score {detail.risk_score}
+        </span>
       </div>
 
       {invoice && (
-        <p>
+        <p className="review-card__vendor-line">
           <strong>{invoice.vendor.name}</strong> — {invoice.total ?? "—"} {invoice.currency}
           {invoice.invoice_number ? ` — ${invoice.invoice_number}` : ""}
         </p>
@@ -70,7 +80,9 @@ function ReviewCard({
         <ul className="flag-list">
           {detail.flags.map((flag, i) => (
             <li key={i}>
-              <span className={severityClassName(flag.severity)}>{flag.severity}</span>{" "}
+              <span className={severityClassName(flag.severity)} title={severityTooltip(flag.severity)}>
+                {flag.severity}
+              </span>{" "}
               <code>{flag.code}</code> — {flag.message}
             </li>
           ))}
@@ -135,18 +147,20 @@ function ReviewCard({
       {showSource && <pre className="source-view">{detail.raw_text ?? "(not available)"}</pre>}
 
       <div className="review-card__decision">
+        <label htmlFor={`reason-${detail.document_name}`}>Your decision</label>
         <textarea
-          placeholder="Reason for your decision"
+          id={`reason-${detail.document_name}`}
+          placeholder="Why are you approving or rejecting this invoice?"
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           rows={2}
         />
         {error && <p className="banner banner--warning">{error}</p>}
         <div className="review-card__buttons">
-          <button disabled={submitting} onClick={() => submit("approved")}>
+          <button className="btn btn--approve" disabled={submitting} onClick={() => submit("approved")}>
             Approve
           </button>
-          <button disabled={submitting} onClick={() => submit("rejected")}>
+          <button className="btn btn--reject" disabled={submitting} onClick={() => submit("rejected")}>
             Reject
           </button>
         </div>
@@ -178,8 +192,12 @@ export function QueueView() {
   return (
     <div className="view">
       <h1>Review queue</h1>
+      <p className="view__subtitle">
+        Only invoices the system can't decide on its own — everything you need to approve
+        or reject is on the card, with the source document one click away.
+      </p>
       {details.length === 0 ? (
-        <p className="empty">No invoices awaiting review.</p>
+        <p className="empty">Nothing needs your review right now.</p>
       ) : (
         <div className="review-list">
           {details.map((detail) => (

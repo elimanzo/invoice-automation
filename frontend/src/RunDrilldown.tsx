@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { RunDetail, getRun } from "./api";
-import { severityClassName } from "./severity";
+import { severityClassName, severityTooltip } from "./severity";
 import { stageLabel } from "./stages";
+import { decisionClassName } from "./status";
 
 // Ticket 15: an engineer debugging one run. Reads the persisted trace via a single
 // `GET /runs/{name}` — never re-runs the pipeline (SPEC.md #78).
@@ -31,7 +32,9 @@ export function RunDrilldown() {
     return (
       <div className="view">
         <p className="empty">{error}</p>
-        <Link to="/ledger">Back to ledger</Link>
+        <Link className="back-link" to="/ledger">
+          &larr; Back to ledger
+        </Link>
       </div>
     );
   }
@@ -46,16 +49,28 @@ export function RunDrilldown() {
 
   return (
     <div className="view">
-      <Link to="/ledger">&larr; Back to ledger</Link>
+      <Link className="back-link" to="/ledger">
+        &larr; Back to ledger
+      </Link>
       <h1>{detail.document_name}</h1>
+      <p className="view__subtitle">
+        Everything recorded for this run — every stage, correction, flag, and LLM call —
+        read straight from the saved trace. Nothing here re-runs the pipeline.
+      </p>
 
       {detail.decision && (
         <section>
           <h2>Decision</h2>
           <p>
-            <span className="status">{detail.decision.outcome}</span>
+            <span className={decisionClassName(detail.decision.outcome)}>
+              {detail.decision.outcome}
+            </span>
           </p>
           <p>{detail.decision.reasoning}</p>
+          <p className="severity-note">
+            Risk score {detail.risk_score} — the accumulated weight of this invoice's soft
+            flags.
+          </p>
         </section>
       )}
 
@@ -63,7 +78,9 @@ export function RunDrilldown() {
         <section>
           <h2>Reviewer decision</h2>
           <p>
-            <span className="status">{detail.human_review.outcome}</span>
+            <span className={decisionClassName(detail.human_review.outcome)}>
+              {detail.human_review.outcome}
+            </span>
           </p>
           <p>{detail.human_review.reason}</p>
         </section>
@@ -101,7 +118,9 @@ export function RunDrilldown() {
           <ul className="flag-list">
             {detail.flags.map((flag, i) => (
               <li key={i}>
-                <span className={severityClassName(flag.severity)}>{flag.severity}</span>{" "}
+                <span className={severityClassName(flag.severity)} title={severityTooltip(flag.severity)}>
+                  {flag.severity}
+                </span>{" "}
                 <code>{flag.code}</code> — {flag.message}
               </li>
             ))}

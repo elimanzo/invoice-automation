@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { RunSummary, listRuns } from "./api";
 import { ImpactStrip } from "./ImpactStrip";
-import { SEVERITY_RANK, severityClassName } from "./severity";
+import { SEVERITY_RANK, severityClassName, severityTooltip } from "./severity";
+import { decisionClassName } from "./status";
 import { usePolled } from "./usePolled";
 
 type SortKey = "document_name" | "vendor" | "amount" | "outcome" | "max_flag_severity";
@@ -13,13 +14,6 @@ const SEVERITY_OPTIONS = ["all", "fatal", "soft", "info", "none"] as const;
 
 function severityLabel(severity: string | null): string {
   return severity ?? "none";
-}
-
-function decisionClassName(outcome: string | null): string {
-  if (outcome === "approved") return "status status--approved";
-  if (outcome === "rejected") return "status status--rejected";
-  if (outcome === "escalated") return "status status--escalated";
-  return "status";
 }
 
 export function LedgerView() {
@@ -98,6 +92,10 @@ export function LedgerView() {
   return (
     <div className="view">
       <h1>Ledger</h1>
+      <p className="view__subtitle">
+        Every invoice this system has processed, with its decision, flags, and how many
+        fields it had to correct — filterable and sortable for a batch audit.
+      </p>
       <ImpactStrip />
 
       <div className="ledger-filters">
@@ -177,7 +175,10 @@ export function LedgerView() {
                   <span className={decisionClassName(run.outcome)}>{run.outcome ?? "pending"}</span>
                 </td>
                 <td>
-                  <span className={severityClassName(run.max_flag_severity)}>
+                  <span
+                    className={severityClassName(run.max_flag_severity)}
+                    title={severityTooltip(run.max_flag_severity)}
+                  >
                     {severityLabel(run.max_flag_severity)}
                   </span>
                 </td>
