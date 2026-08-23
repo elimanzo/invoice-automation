@@ -11,6 +11,7 @@ venv/
 .ruff_cache/
 
 # Runtime artifacts
+.data/
 inventory.db
 *.sqlite
 *.sqlite3
