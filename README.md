@@ -28,8 +28,24 @@ The inventory catalogue creates and seeds itself on first run. `python main.py
 --seed-catalogue` resets it deliberately.
 
 ```bash
-pytest          # 39 tests, no network, no credentials
+pytest          # no network, no credentials
 mypy            # strict, src and tests
+```
+
+## Dashboard
+
+```bash
+python -m invoice_automation.web    # http://127.0.0.1:8000
+```
+
+No Node toolchain required — the React/Vite production bundle is committed under
+`src/invoice_automation/static/` and served as static files ([ADR-0008](docs/adr/0008-react-with-committed-bundle.md)).
+To rebuild it after changing the front end:
+
+```bash
+cd frontend
+npm install
+npm run build    # type-checks, then writes ../src/invoice_automation/static
 ```
 
 ## The problem

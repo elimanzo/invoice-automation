@@ -88,6 +88,17 @@ MODEL_TOKEN_RATES: dict[str, tuple[Decimal, Decimal]] = {
 }
 DEFAULT_TOKEN_RATE: tuple[Decimal, Decimal] = MODEL_TOKEN_RATES["grok-4"]
 
+# The dashboard's impact strip (ticket 15) states automated processing against the
+# manual process it replaces. REQUIREMENTS.md names the 5-day manual delay directly, so
+# that figure is exact. It gives no per-invoice manual cost, only the firm-wide "$2M/year"
+# loss — not a figure this system's own invoice volume can be divided into without
+# guessing that volume. MANUAL_COST_PER_INVOICE_USD is instead a commonly-cited
+# industry benchmark for fully-manual AP processing (APQC/Ardent Partners' surveys put it
+# in the $15-$40 range); a config constant, not a view-level guess, so it can be
+# corrected without touching the dashboard.
+MANUAL_PROCESSING_DAYS: Decimal = Decimal("5")
+MANUAL_COST_PER_INVOICE_USD: Decimal = Decimal("20.00")
+
 
 def _env(name: str, default: str) -> str:
     """Read an environment variable, treating empty as unset.
