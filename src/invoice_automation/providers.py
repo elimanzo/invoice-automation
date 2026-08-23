@@ -40,6 +40,11 @@ class StructuredCall:
     number does not identify a call, and recovering an identifier by regex over prompt
     text would silently return the wrong recording.
     """
+    kind: str = "extract"
+    """What this call is for: "extract" or "critique". Grok doesn't care — it just gets
+    a schema and a prompt either way. FakeProvider uses it to know that an unrecorded
+    critique call should default to "no problem found" rather than raise, so adding the
+    critique step didn't require a second recorded response for every existing test."""
 
 
 @runtime_checkable
@@ -94,7 +99,13 @@ class GrokProvider:
     ) -> None:
         # `client` is injectable so tests can supply a stand-in with the same shape as
         # the OpenAI SDK's response objects, without a real key or a network call.
-        self._client = client or OpenAI(api_key=api_key, base_url=base_url)
+        # A live call once took over two minutes: the SDK's own default retry-with-
+        # backoff compounding with a slow response. A bounded timeout plus a single
+        # SDK-level retry means a stall surfaces as ProviderUnavailable in a predictable
+        # window, rather than the whole CLI appearing to hang.
+        self._client = client or OpenAI(
+            api_key=api_key, base_url=base_url, timeout=30.0, max_retries=1
+        )
         self._model = model
 
     def structured(self, call: StructuredCall) -> dict[str, Any]:
@@ -194,6 +205,16 @@ class FakeProvider:
     def structured(self, call: StructuredCall) -> dict[str, Any]:
         self.calls.append(call)
         key = Path(call.document_id).stem
+
+        if call.kind == "critique":
+            # A critique call with no specific recording defaults to "no problem" —
+            # every extraction test written before the critic existed still passes
+            # without needing a matching critique response for each one.
+            critique_key = f"{key}.critique"
+            if critique_key in self.responses:
+                return copy.deepcopy(self.responses[critique_key])
+            return {"problem_found": False, "explanation": None}
+
         if key not in self.responses:
             raise MissingRecording(
                 f"No recorded response for {call.document_id!r}. "

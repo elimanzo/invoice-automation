@@ -68,7 +68,7 @@ def test_pipeline_dependencies_accept_foreign_implementations(invoices_dir: Path
         registry=NullRegistry(),
     )
 
-    invoice = extract_invoice(load_document(invoices_dir / "invoice_1001.txt"), deps)
+    invoice = extract_invoice(load_document(invoices_dir / "invoice_1001.txt"), deps).invoice
 
     assert invoice.invoice_number == "INV-1001"
     widget_a = deps.catalogue.get_item("WidgetA")

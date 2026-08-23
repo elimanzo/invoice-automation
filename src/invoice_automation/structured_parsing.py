@@ -296,7 +296,7 @@ def cross_check(document: Document, deps: Deps) -> list[Flag]:
     from .extraction import extract_invoice  # local import: avoids a cycle at module load
 
     deterministic = parse_structured(document)
-    model_based = extract_invoice(document, deps)
+    model_based = extract_invoice(document, deps).invoice
 
     flags = []
     for field in _CROSS_CHECK_FIELDS:

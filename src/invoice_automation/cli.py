@@ -120,6 +120,13 @@ def render(result: RunResult, *, document_name: str) -> str:
     ]
     lines.append("")
 
+    lines.append("Corrections:")
+    lines += [
+        f"  {c.field}: {c.raw!r} -> {c.value!r}  ({c.reason}, confidence {c.confidence:.2f})"
+        for c in result.corrections
+    ] or ["  (none)"]
+    lines.append("")
+
     lines += _decision_lines(result.decision)
     lines += _payment_lines(result.payment)
     return "\n".join(lines)

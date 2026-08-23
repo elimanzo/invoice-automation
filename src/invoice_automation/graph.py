@@ -92,14 +92,24 @@ def _ingest(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
         except StructuredParseFailed:
             pass  # Falls through to model extraction below.
 
-    invoice = extract_invoice(document, deps)
-    return {"invoice": invoice.model_dump(mode="json"), "extraction_method": "model"}
+    result = extract_invoice(document, deps)
+    return {
+        "invoice": result.invoice.model_dump(mode="json"),
+        "extraction_method": "model",
+        "corrections": [c.model_dump(mode="json") for c in result.corrections],
+        # Extraction-stage flags (e.g. an unresolvable due date) start the flags list;
+        # validate appends to it rather than replacing it, so neither stage's findings
+        # overwrite the other's.
+        "flags": [f.model_dump(mode="json") for f in result.flags],
+    }
 
 
 def _validate(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     invoice = Invoice.model_validate(state["invoice"])
-    flags = validate_invoice(invoice, deps)
-    return {"flags": [flag.model_dump(mode="json") for flag in flags]}
+    existing_flags = [Flag.model_validate(f) for f in state.get("flags", [])]
+    new_flags = validate_invoice(invoice, deps)
+    combined = existing_flags + new_flags
+    return {"flags": [flag.model_dump(mode="json") for flag in combined]}
 
 
 def _approve(state: PipelineState) -> dict[str, Any]:

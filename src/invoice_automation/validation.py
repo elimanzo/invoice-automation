@@ -16,13 +16,31 @@ different things requires a rule to reject it with.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from .deps import Deps
 from .models import Flag, FlagSeverity, Invoice
+
+_ROUNDING_TOLERANCE = Decimal("0.01")
 
 
 def validate_invoice(invoice: Invoice, deps: Deps) -> list[Flag]:
     """Check an invoice against the catalogue. Returns every flag raised."""
     flags: list[Flag] = []
+
+    if _line_items_disagree_with_stated_total(invoice):
+        stated_field = "subtotal" if invoice.subtotal is not None else "total"
+        stated_value = invoice.subtotal if invoice.subtotal is not None else invoice.total
+        flags.append(
+            Flag(
+                severity=FlagSeverity.SOFT,
+                code="total_mismatch",
+                message=(
+                    f"stated {stated_field} {stated_value} does not match the sum of "
+                    f"line items {invoice.line_items_total}"
+                ),
+            )
+        )
 
     for line in invoice.line_items:
         if line.quantity < 0:
@@ -51,3 +69,25 @@ def validate_invoice(invoice: Invoice, deps: Deps) -> list[Flag]:
             )
 
     return flags
+
+
+def _line_items_disagree_with_stated_total(invoice: Invoice) -> bool:
+    """Whether the line items don't add up to what the invoice says they should.
+
+    Compared against subtotal when it's stated — subtotal is defined as the pre-tax sum
+    of line items, so it's the number that should always match regardless of tax rate or
+    other charges. Falling back to total only when there's no tax to account for avoids
+    a false positive on every taxed invoice: total includes tax (and sometimes shipping,
+    which nothing in this model tracks), so total alone disagreeing with the line items
+    is expected, not a data problem.
+    """
+    if invoice.line_items_total is None:
+        return False  # An unpriced line means there's nothing reliable to compare yet.
+
+    if invoice.subtotal is not None:
+        return abs(invoice.subtotal - invoice.line_items_total) > _ROUNDING_TOLERANCE
+
+    if invoice.total is not None and not invoice.tax_amount:
+        return abs(invoice.total - invoice.line_items_total) > _ROUNDING_TOLERANCE
+
+    return False

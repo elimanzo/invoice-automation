@@ -19,7 +19,7 @@ from invoice_automation.extraction import extract_invoice
 
 def test_clean_text_invoice_yields_both_line_items(invoices_dir: Path, deps: Deps) -> None:
     document = load_document(invoices_dir / "invoice_1001.txt")
-    invoice = extract_invoice(document, deps)
+    invoice = extract_invoice(document, deps).invoice
 
     assert invoice.invoice_number == "INV-1001"
     assert invoice.vendor.name == "Widgets Inc."
@@ -34,7 +34,7 @@ def test_clean_text_invoice_yields_both_line_items(invoices_dir: Path, deps: Dep
 
 def test_line_item_amount_is_derived_when_absent(invoices_dir: Path, deps: Deps) -> None:
     document = load_document(invoices_dir / "invoice_1001.txt")
-    invoice = extract_invoice(document, deps)
+    invoice = extract_invoice(document, deps).invoice
 
     # The document states no per-line amount; quantity times unit price is not a
     # correction, it is arithmetic.
@@ -44,7 +44,7 @@ def test_line_item_amount_is_derived_when_absent(invoices_dir: Path, deps: Deps)
 def test_line_items_are_never_merged(invoices_dir: Path, deps: Deps) -> None:
     """An item billed more than once stays more than one line item."""
     document = load_document(invoices_dir / "invoice_1013.json")
-    invoice = extract_invoice(document, deps)
+    invoice = extract_invoice(document, deps).invoice
 
     widget_a_lines = [item for item in invoice.line_items if item.item == "WidgetA"]
     assert len(widget_a_lines) == 3
