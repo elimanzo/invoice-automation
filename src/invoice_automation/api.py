@@ -16,6 +16,7 @@ import json
 import queue
 import threading
 from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -26,6 +27,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import BaseModel
 
 from .batch import BatchSummary, run_batch
+from .config import MANUAL_COST_PER_INVOICE_USD, MANUAL_PROCESSING_DAYS
 from .deps import Deps
 from .documents import (
     UndecodableDocument,
@@ -36,8 +38,16 @@ from .documents import (
 from .graph import NotAwaitingReview, build_graph
 from .graph import resume_invoice as _resume_invoice
 from .graph import run_invoice as _run_invoice
-from .models import Correction, Decision, Flag, HumanReview, Invoice, ToolCallRecord
-from .tracing import StageEvent, Tracer
+from .models import (
+    Correction,
+    Decision,
+    Flag,
+    FlagSeverity,
+    HumanReview,
+    Invoice,
+    ToolCallRecord,
+)
+from .tracing import LlmCallEvent, StageEvent, Tracer
 
 
 class RunEventBus:
@@ -122,10 +132,26 @@ class RunSummary(BaseModel):
     currency: str | None
     flag_count: int
     timestamp: str | None
+    vendor: str | None
+    correction_count: int
+    max_flag_severity: str | None
+
+
+class LlmCallSummary(BaseModel):
+    kind: str
+    cache_hit: bool
+    latency_ms: float
+    prompt_tokens: int
+    completion_tokens: int
+    cost_usd: str
+    prompt: str
+    response: str
 
 
 class RunDetail(BaseModel):
     document_name: str
+    document_format: str | None
+    raw_text: str | None
     invoice: Invoice | None
     flags: list[Flag]
     decision: Decision | None
@@ -133,7 +159,36 @@ class RunDetail(BaseModel):
     tool_calls: list[ToolCallRecord]
     human_review: HumanReview | None
     stages: list[dict[str, Any]]
+    llm_calls: list[LlmCallSummary]
     awaiting_review: bool
+
+
+class ImpactSummary(BaseModel):
+    """The controller-facing business-impact strip (ticket 15): the system stated in
+    the terms the business uses, not in pipeline vocabulary."""
+
+    invoices_processed: int
+    avg_processing_ms: float
+    manual_baseline_days: float
+    errors_caught: int
+    dollars_flagged: str
+    cost_per_invoice_usd: str
+    manual_cost_per_invoice_usd: str
+
+
+# Ranks a flag's control-flow weight (models.py's FlagSeverity) so the ledger can
+# report the single worst severity per run without the frontend re-deriving the order.
+_SEVERITY_RANK: dict[FlagSeverity, int] = {
+    FlagSeverity.FATAL: 3,
+    FlagSeverity.SOFT: 2,
+    FlagSeverity.INFO: 1,
+}
+
+
+def _max_severity(flags: list[Flag]) -> str | None:
+    if not flags:
+        return None
+    return max(flags, key=lambda f: _SEVERITY_RANK[f.severity]).severity.value
 
 
 class ReviewDecisionRequest(BaseModel):
@@ -169,12 +224,14 @@ def _to_summary(document_name: str, snapshot: Any) -> RunSummary:
     values = snapshot.values
     invoice = values.get("invoice")
     decision = values.get("decision")
-    flags = values.get("flags") or []
+    flags = [Flag.model_validate(f) for f in values.get("flags") or []]
     amount = None
     currency = None
+    vendor = None
     if invoice is not None:
         amount = invoice.get("total")
         currency = invoice.get("currency")
+        vendor = (invoice.get("vendor") or {}).get("name")
     return RunSummary(
         document_name=document_name,
         outcome=decision["outcome"] if decision else None,
@@ -182,6 +239,22 @@ def _to_summary(document_name: str, snapshot: Any) -> RunSummary:
         currency=currency,
         flag_count=len(flags),
         timestamp=snapshot.created_at,
+        vendor=vendor,
+        correction_count=len(values.get("corrections") or []),
+        max_flag_severity=_max_severity(flags),
+    )
+
+
+def _to_llm_call(event: LlmCallEvent) -> LlmCallSummary:
+    return LlmCallSummary(
+        kind=event.kind,
+        cache_hit=event.cache_hit,
+        latency_ms=event.latency_ms,
+        prompt_tokens=event.prompt_tokens,
+        completion_tokens=event.completion_tokens,
+        cost_usd=str(event.cost_usd),
+        prompt=event.prompt,
+        response=event.response,
     )
 
 
@@ -199,6 +272,8 @@ def _to_detail(document_name: str, snapshot: Any, deps: Deps) -> RunDetail:
     ]
     return RunDetail(
         document_name=document_name,
+        document_format=values.get("document_format"),
+        raw_text=values.get("raw_text"),
         invoice=Invoice.model_validate(invoice) if invoice else None,
         flags=[Flag.model_validate(f) for f in values.get("flags") or []],
         decision=Decision.model_validate(values["decision"]) if values.get("decision") else None,
@@ -208,6 +283,7 @@ def _to_detail(document_name: str, snapshot: Any, deps: Deps) -> RunDetail:
         if values.get("human_review")
         else None,
         stages=stages,
+        llm_calls=[_to_llm_call(e) for e in deps.tracer.llm_calls_for(document_name)],
         awaiting_review=bool(snapshot.interrupts),
     )
 
@@ -301,6 +377,43 @@ def create_app(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"no such directory: {directory}")
         background_tasks.add_task(_process_directory, directory)
         return TriggerResponse(status="processing", document_name=None)
+
+    @app.get("/impact")
+    def get_impact() -> ImpactSummary:
+        runs = list(_iter_snapshots())
+        invoices_processed = len(runs)
+
+        total_duration_ms = 0.0
+        errors_caught = 0
+        dollars_flagged = Decimal("0")
+        total_cost = Decimal("0")
+        for run_id, snapshot in runs:
+            total_duration_ms += sum(
+                s.duration_ms for s in observed_deps.tracer.stages_for(run_id)
+            )
+            total_cost += observed_deps.tracer.cost_for(run_id)
+
+            flags = [Flag.model_validate(f) for f in snapshot.values.get("flags") or []]
+            caught = [f for f in flags if f.severity != FlagSeverity.INFO]
+            errors_caught += len(caught)
+            if caught:
+                invoice = snapshot.values.get("invoice")
+                total = invoice.get("total") if invoice else None
+                if total is not None:
+                    dollars_flagged += Decimal(str(total))
+
+        avg_processing_ms = total_duration_ms / invoices_processed if invoices_processed else 0.0
+        cost_per_invoice = total_cost / invoices_processed if invoices_processed else Decimal("0")
+
+        return ImpactSummary(
+            invoices_processed=invoices_processed,
+            avg_processing_ms=avg_processing_ms,
+            manual_baseline_days=float(MANUAL_PROCESSING_DAYS),
+            errors_caught=errors_caught,
+            dollars_flagged=str(dollars_flagged),
+            cost_per_invoice_usd=str(cost_per_invoice),
+            manual_cost_per_invoice_usd=str(MANUAL_COST_PER_INVOICE_USD),
+        )
 
     @app.get("/events")
     def stream_events() -> StreamingResponse:

@@ -1,6 +1,7 @@
 import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
 import { PipelineView } from "./PipelineView";
 import { LedgerView } from "./LedgerView";
+import { RunDrilldown } from "./RunDrilldown";
 import { QueueView } from "./QueueView";
 
 // HashRouter, not BrowserRouter: the bundle is served as plain static files with no
@@ -26,6 +27,7 @@ export function App() {
           <Routes>
             <Route path="/" element={<PipelineView />} />
             <Route path="/ledger" element={<LedgerView />} />
+            <Route path="/ledger/:documentName" element={<RunDrilldown />} />
             <Route path="/queue" element={<QueueView />} />
           </Routes>
         </main>
