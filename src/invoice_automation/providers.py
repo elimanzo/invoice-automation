@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 
 SAMPLE_RESPONSES_DIR = Path(__file__).parent / "sample_responses"
 
@@ -64,6 +64,18 @@ class MalformedProviderResponse(Exception):
     """
 
 
+class ProviderUnavailable(Exception):
+    """The provider could not be reached, or refused the request outright.
+
+    Auth failure, an empty API key, a network outage, a rate limit, a billing problem —
+    anything the transport layer raises before a response worth judging ever exists.
+    Distinct from `MalformedProviderResponse`, which means a response arrived and was
+    junk: this means no usable response arrived at all, so extraction's retry loop does
+    not catch it — retrying an expired key wastes calls without ever succeeding. It
+    propagates to the CLI, which reports it the same clean way as every other failure.
+    """
+
+
 class GrokProvider:
     """Grok via xAI's OpenAI-compatible API.
 
@@ -86,24 +98,34 @@ class GrokProvider:
         self._model = model
 
     def structured(self, call: StructuredCall) -> dict[str, Any]:
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": call.system},
-                {"role": "user", "content": call.user},
-            ],
-            tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": TOOL_NAME,
-                        "description": "Record the invoice extracted from the document.",
-                        "parameters": call.schema,
-                    },
-                }
-            ],
-            tool_choice={"type": "function", "function": {"name": TOOL_NAME}},
-        )
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": call.system},
+                    {"role": "user", "content": call.user},
+                ],
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": TOOL_NAME,
+                            "description": "Record the invoice extracted from the document.",
+                            "parameters": call.schema,
+                        },
+                    }
+                ],
+                tool_choice={"type": "function", "function": {"name": TOOL_NAME}},
+            )
+        except OpenAIError as exc:
+            raise ProviderUnavailable(
+                f"Grok request failed for {call.document_id!r}: {exc}"
+            ) from exc
+
+        if not response.choices:
+            raise ProviderUnavailable(
+                f"Grok returned no choices for {call.document_id!r}"
+            )
 
         message = response.choices[0].message
         tool_calls = message.tool_calls

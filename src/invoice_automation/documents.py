@@ -10,6 +10,8 @@ This is the only module that imports the PDF library, and the only one that need
 
 from __future__ import annotations
 
+import json
+import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -95,14 +97,31 @@ def _sniff_format(raw_bytes: bytes) -> DocumentFormat | None:
     CSV and plain text have none — a CSV's first bytes look like any other text, and
     forcing a signature there would misdetect more than it fixes. Those two fall through
     to the suffix.
+
+    JSON and XML are confirmed by actually parsing, not just a leading brace or angle
+    bracket: a forwarded-email body that happens to open with a bracketed token (a
+    subject tag, an HTML fragment) would otherwise be misdetected and extracted under
+    the wrong format's prompt. A leading character is a hint about which parser to try,
+    never the verdict on its own.
     """
     stripped = raw_bytes.lstrip()
     if stripped.startswith(b"%PDF-"):
         return DocumentFormat.PDF
-    if stripped.startswith(b"{") or stripped.startswith(b"["):
+
+    if stripped[:1] in (b"{", b"["):
+        try:
+            json.loads(raw_bytes)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
         return DocumentFormat.JSON
-    if stripped.startswith(b"<?xml") or stripped.startswith(b"<"):
+
+    if stripped[:1] == b"<":
+        try:
+            ElementTree.fromstring(raw_bytes)
+        except ElementTree.ParseError:
+            return None
         return DocumentFormat.XML
+
     return None
 
 
@@ -126,9 +145,19 @@ def _decode_text(name: str, raw_bytes: bytes) -> str:
 
 
 def _extract_pdf_text(path: Path) -> str:
-    """Extract text from every page of a PDF, refusing to return an empty invoice."""
-    with pdfplumber.open(path) as pdf:
-        pages_text = [page.extract_text() or "" for page in pdf.pages]
+    """Extract text from every page of a PDF, refusing to return an empty invoice.
+
+    Catches broadly around pdfplumber/pdfminer: a corrupt or encrypted PDF can raise
+    from deep inside that library's own exception hierarchy, which is not part of this
+    codebase's public contract to enumerate. At this boundary — an arbitrary file handed
+    in from outside the system — any failure to read text out of it means the same thing
+    to every caller: the document could not be read, name it and say so.
+    """
+    try:
+        with pdfplumber.open(path) as pdf:
+            pages_text = [page.extract_text() or "" for page in pdf.pages]
+    except Exception as exc:
+        raise UnreadableDocument(f"{path.name}: could not read the PDF: {exc}") from exc
 
     combined = "\n".join(pages_text).strip()
     if not combined:

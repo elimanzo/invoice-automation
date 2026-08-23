@@ -23,7 +23,9 @@ DEFAULT_DATA_DIR = ".data"
 
 # Total attempts at extraction, including the first: 2 means one retry. A schema
 # violation is fed back to the model as feedback before the retry (ticket 03's
-# self-correction loop) — a policy dial, not a magic number buried in extraction.py.
+# self-correction loop). A module constant rather than a Settings field: nothing
+# threads Settings through to extraction.py, and a per-run override that no caller
+# could actually set would be a knob that does nothing.
 DEFAULT_EXTRACTION_MAX_ATTEMPTS = 2
 
 
@@ -52,7 +54,6 @@ class Settings:
     data_dir: str = DEFAULT_DATA_DIR
     catalogue_filename: str = "catalogue.db"
     registry_filename: str = "registry.db"
-    extraction_max_attempts: int = DEFAULT_EXTRACTION_MAX_ATTEMPTS
 
     @classmethod
     def from_env(cls) -> Settings:
