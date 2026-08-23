@@ -15,7 +15,7 @@ from pathlib import Path
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .catalogue import seed_catalogue
-from .config import Settings
+from .config import MissingApiKey, Settings
 from .deps import build_deps
 from .documents import UndecodableDocument, UnsupportedDocument, load_document
 from .extraction import ExtractionFailed
@@ -40,6 +40,15 @@ def main(argv: list[str] | None = None) -> int:
         "--seed-catalogue",
         action="store_true",
         help="Reset the inventory catalogue to its seed contents and exit.",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=["grok", "fake"],
+        default=None,
+        help=(
+            "Force a reasoning provider. Default: grok if XAI_API_KEY is set, "
+            "fake otherwise."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -69,7 +78,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    deps = build_deps(settings)
+    try:
+        deps = build_deps(settings, provider=args.provider)
+    except MissingApiKey as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     checkpoint_path = Path(settings.data_dir) / CHECKPOINT_FILENAME
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,9 +1,10 @@
 """Extraction: a document becomes an invoice.
 
 The model is constrained to the invoice schema rather than asked for JSON, and the result
-is validated before anything downstream sees it. Schema-violation retries, repair of
-corrupted values, and the extraction critic all arrive with tickets 03 and 06; this is the
-straight path.
+is validated before anything downstream sees it. A schema violation is fed back to the
+model as feedback and retried, bounded by a configured cap — the first self-correction
+loop in the system. Repair of corrupted values and the extraction critic arrive with
+ticket 06; this ticket only teaches the model to correct its own shape.
 """
 
 from __future__ import annotations
@@ -12,10 +13,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .config import DEFAULT_EXTRACTION_MAX_ATTEMPTS
 from .deps import Deps
 from .documents import Document
 from .models import Invoice
-from .providers import StructuredCall
+from .providers import MalformedProviderResponse, StructuredCall
 
 SYSTEM_PROMPT = """\
 You extract structured data from supplier invoices for an accounts-payable system.
@@ -39,22 +41,38 @@ class ExtractionFailed(Exception):
 def extract_invoice(document: Document, deps: Deps) -> Invoice:
     """Extract the invoice a document carries.
 
-    Raises `ExtractionFailed` when the provider returns something that is not an invoice.
+    On a schema violation, the validation error is fed back to the model as feedback and
+    extraction retries, up to `DEFAULT_EXTRACTION_MAX_ATTEMPTS` attempts in total. Raises
+    `ExtractionFailed` once that cap is exhausted.
     """
-    call = StructuredCall(
-        system=SYSTEM_PROMPT,
-        user=_user_prompt(document),
-        schema=Invoice.model_json_schema(),
-        document_id=document.name,
-    )
-    payload: dict[str, Any] = deps.provider.structured(call)
+    schema = Invoice.model_json_schema()
+    base_prompt = _user_prompt(document)
+    feedback: str | None = None
+    last_error: Exception | None = None
 
-    try:
-        return Invoice.model_validate(payload)
-    except ValidationError as exc:
-        raise ExtractionFailed(
-            f"{document.name}: provider returned a payload that is not a valid invoice: {exc}"
-        ) from exc
+    for attempt in range(1, DEFAULT_EXTRACTION_MAX_ATTEMPTS + 1):
+        call = StructuredCall(
+            system=SYSTEM_PROMPT,
+            user=base_prompt if feedback is None else f"{base_prompt}\n\n{feedback}",
+            schema=schema,
+            document_id=document.name,
+        )
+
+        try:
+            payload: dict[str, Any] = deps.provider.structured(call)
+            return Invoice.model_validate(payload)
+        except (ValidationError, MalformedProviderResponse) as exc:
+            last_error = exc
+            feedback = (
+                f"--- YOUR PREVIOUS ATTEMPT (#{attempt}) WAS REJECTED ---\n"
+                f"{exc}\n"
+                "Correct it and call the tool again with a payload matching the schema."
+            )
+
+    raise ExtractionFailed(
+        f"{document.name}: no valid invoice after {DEFAULT_EXTRACTION_MAX_ATTEMPTS} "
+        f"attempt(s): {last_error}"
+    ) from last_error
 
 
 def _user_prompt(document: Document) -> str:
