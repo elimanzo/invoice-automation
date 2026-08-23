@@ -18,6 +18,7 @@ from .catalogue import seed_catalogue
 from .config import Settings
 from .deps import build_deps
 from .documents import UndecodableDocument, UnsupportedDocument, load_document
+from .extraction import ExtractionFailed
 from .graph import RunResult, run_invoice
 from .models import Decision, Flag, Invoice
 from .payments import PaymentResult
@@ -76,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         checkpointer = SqliteSaver(conn)
         try:
             result = run_invoice(document, deps, checkpointer=checkpointer)
-        except LookupError as exc:
+        except (ExtractionFailed, LookupError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 

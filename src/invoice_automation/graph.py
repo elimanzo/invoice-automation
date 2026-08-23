@@ -91,7 +91,13 @@ def _approve(state: PipelineState) -> dict[str, Any]:
 def _pay(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     decision = Decision.model_validate(state["decision"])
     if decision.outcome != "approved":
-        return {}
+        # Explicit None, not an empty dict. The checkpointer persists state by
+        # thread_id (the document name), so a later run reprocessing the same
+        # document reuses that checkpoint. Returning {} leaves a prior run's
+        # "payment" key untouched — a stale success record would silently survive
+        # onto an invoice that was just rejected or escalated. Emitting the key
+        # ourselves is what makes this run's outcome replace the last one's.
+        return {"payment": None}
 
     invoice = Invoice.model_validate(state["invoice"])
     total = invoice.total if invoice.total is not None else invoice.line_items_total
