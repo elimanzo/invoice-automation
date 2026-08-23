@@ -97,6 +97,16 @@ the extraction match the raw text? do line items sum to the subtotal?) and insid
 
 Avoid: "reviewer" — that means the human in the queue.
 
+### Clerk
+The AP (accounts-payable) clerk — the human who starts a **run** by submitting a document,
+via the CLI or the dashboard's upload action. A clerk feeds documents in; a clerk never
+decides anything. Distinct from a **reviewer**, who only ever acts on an already-escalated
+invoice.
+
+Avoid: conflating with "reviewer" — a clerk and a reviewer can be the same person in real
+life, but they are different roles at different stages here, and the system never assumes
+one implies the other.
+
 ## The four stages
 
 1. **Ingestion** — document in, structured invoice out, with **corrections**.
