@@ -49,6 +49,7 @@ def test_negative_quantity_and_empty_vendor_parse_cleanly_but_are_rejected(
     assert result.decision is not None
     assert result.decision.outcome == "rejected"
     assert result.payment is None
+    assert deps.payment.payments == []  # type: ignore[attr-defined]  # never called
 
 
 def test_a_document_the_deterministic_parser_cannot_read_falls_back_to_the_model(

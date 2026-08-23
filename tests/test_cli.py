@@ -32,14 +32,16 @@ def test_invoice_path_runs_the_pipeline_end_to_end(
     assert "Payment:   success" in output
 
 
-def test_an_over_threshold_invoice_is_reported_as_escalated_with_no_payment(
+def test_a_stock_aggregation_violation_is_reported_as_rejected_with_no_payment(
     invoices_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """INV-1013's WidgetA/WidgetB/GadgetX each exceed stock only once aggregated
+    across their multiple lines — see test_graph.py for the full breakdown."""
     exit_code = main([f"--invoice_path={invoices_dir / 'invoice_1013.json'}"])
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "Decision:  ESCALATED" in output
+    assert "Decision:  REJECTED" in output
     assert "Payment:   not made" in output
 
 

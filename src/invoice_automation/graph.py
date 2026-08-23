@@ -23,6 +23,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -61,6 +62,10 @@ class PipelineState(TypedDict, total=False):
     extraction_method: str
     """Which path ingestion took: "deterministic" or "model" (ADR-0009). Recorded so a
     run's trace can show it without downstream code needing to care which one ran."""
+    usd_total: str | None
+    """The invoice total converted to USD (validation.py), for approval's dollar
+    threshold. A string, like every other JSON-shaped state field — approval parses it
+    back to Decimal at its own boundary, same as invoice and flags."""
 
 
 @dataclass(frozen=True)
@@ -107,15 +112,25 @@ def _ingest(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
 def _validate(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     invoice = Invoice.model_validate(state["invoice"])
     existing_flags = [Flag.model_validate(f) for f in state.get("flags", [])]
-    new_flags = validate_invoice(invoice, deps)
-    combined = existing_flags + new_flags
-    return {"flags": [flag.model_dump(mode="json") for flag in combined]}
+    existing_corrections = [Correction.model_validate(c) for c in state.get("corrections", [])]
+
+    result = validate_invoice(invoice, deps)
+
+    return {
+        "flags": [f.model_dump(mode="json") for f in existing_flags + result.flags],
+        "corrections": [
+            c.model_dump(mode="json") for c in existing_corrections + result.corrections
+        ],
+        "usd_total": str(result.usd_total) if result.usd_total is not None else None,
+    }
 
 
 def _approve(state: PipelineState) -> dict[str, Any]:
     invoice = Invoice.model_validate(state["invoice"])
     flags = [Flag.model_validate(f) for f in state.get("flags", [])]
-    decision = decide(invoice, flags)
+    usd_total_str = state.get("usd_total")
+    usd_total = Decimal(usd_total_str) if usd_total_str is not None else None
+    decision = decide(invoice, flags, usd_total=usd_total)
     return {"decision": decision.model_dump(mode="json")}
 
 
