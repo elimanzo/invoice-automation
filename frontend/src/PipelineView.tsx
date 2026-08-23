@@ -60,6 +60,11 @@ export function PipelineView() {
                   <td>{formatElapsed(row.elapsedMs)}</td>
                   <td>
                     <span className={className}>{label}</span>
+                    {row.failureDetail && (
+                      <span className="pipeline-table__reason" title={row.failureDetail}>
+                        {row.failureDetail}
+                      </span>
+                    )}
                   </td>
                 </tr>
               );

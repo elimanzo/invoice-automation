@@ -11,6 +11,10 @@ export type PipelineRow = {
   amount: string | null;
   currency: string | null;
   elapsedMs: number;
+  failureDetail: string | null;
+  /** Why the stage failed, straight from the tracer -- shown as a tooltip on the
+   * "Failed" badge, since that label alone doesn't tell a user whether it's a
+   * missing LLM cassette or something that actually needs their attention. */
 };
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting";
@@ -34,6 +38,7 @@ function rowFromDetail(detail: RunDetail): PipelineRow {
     amount: null,
     currency: null,
     elapsedMs: completedMs,
+    failureDetail: failed ? last?.detail ?? null : null,
   };
 }
 
@@ -90,6 +95,7 @@ export function usePipelineRuns(): { rows: PipelineRow[]; status: ConnectionStat
                 amount: summary.amount,
                 currency: summary.currency,
                 elapsedMs: 0,
+                failureDetail: summary.failure_detail,
               });
             }
           }
@@ -126,6 +132,7 @@ export function usePipelineRuns(): { rows: PipelineRow[]; status: ConnectionStat
           amount: null,
           currency: null,
           elapsedMs: 0,
+          failureDetail: null,
         };
         if (event.transition === "enter") {
           runningSince.current.set(event.run_id, Date.now());
