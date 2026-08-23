@@ -659,6 +659,67 @@ body {
   resize: vertical;
 }
 
+.review-card__header-edits {
+  margin-bottom: var(--space-4);
+}
+
+.header-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+}
+
+.header-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.header-edit-field input {
+  font: inherit;
+  text-transform: none;
+  font-weight: 400;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.pipeline-table input {
+  font: inherit;
+  width: 100%;
+  min-width: 4rem;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.correction-source {
+  display: inline-flex;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.correction-source--human {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.correction-source--model {
+  background: var(--color-neutral-bg);
+  color: var(--color-text-muted);
+}
+
 .review-card__buttons {
   display: flex;
   gap: var(--space-3);

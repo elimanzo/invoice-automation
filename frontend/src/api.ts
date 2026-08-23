@@ -60,6 +60,30 @@ export type Correction = {
   value: string;
   reason: string;
   confidence: number;
+  source: "model" | "human";
+};
+
+// Ticket 19: a reviewer's staged edit to one field of an escalated invoice, scoped to
+// fields where a wrong value usually means a typo rather than the wrong document
+// matched (vendor identity, invoice number, and computed fields stay read-only).
+export type HeaderEditField =
+  | "due_date"
+  | "invoice_date"
+  | "payment_terms"
+  | "purchase_order_reference"
+  | "notes";
+
+export type LineItemEditField = "quantity" | "unit_price" | "stated_amount" | "note";
+
+export type HeaderEdit = {
+  field: HeaderEditField;
+  value: string | null;
+};
+
+export type LineItemEdit = {
+  index: number;
+  field: LineItemEditField;
+  value: string | null;
 };
 
 export type ToolCallRecord = {
@@ -186,11 +210,17 @@ export function submitReview(
   documentName: string,
   outcome: "approved" | "rejected",
   reason: string,
+  edits?: { headerEdits: HeaderEdit[]; lineItemEdits: LineItemEdit[] },
 ): Promise<RunDetail> {
   return fetch(`/reviews/${encodeURIComponent(documentName)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ outcome, reason }),
+    body: JSON.stringify({
+      outcome,
+      reason,
+      header_edits: edits?.headerEdits ?? [],
+      line_item_edits: edits?.lineItemEdits ?? [],
+    }),
   }).then(async (response) => {
     if (!response.ok) {
       throw new Error(`submit review responded ${response.status}`);

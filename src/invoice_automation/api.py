@@ -18,14 +18,14 @@ import threading
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 
 from .approval import compute_risk_score
 from .batch import BatchSummary, run_batch
@@ -51,6 +51,7 @@ from .models import (
     ToolCallRecord,
 )
 from .tracing import LlmCallEvent, StageEvent, Tracer
+from .validation import VALIDATION_CORRECTION_FIELDS, VALIDATION_FLAG_CODES, validate_invoice
 
 
 class RunEventBus:
@@ -220,9 +221,29 @@ def _max_severity(flags: list[Flag]) -> str | None:
     return max(flags, key=lambda f: _SEVERITY_RANK[f.severity]).severity.value
 
 
+class HeaderEdit(BaseModel):
+    """One reviewer edit to a header field (ticket 19). Scoped to fields where a wrong
+    value usually means a typo, not a wrong document matched — see ADR-0012."""
+
+    field: Literal[
+        "due_date", "invoice_date", "payment_terms", "purchase_order_reference", "notes"
+    ]
+    value: str | None = None
+
+
+class LineItemEdit(BaseModel):
+    """One reviewer edit to a line item field, addressed by list index (ticket 19)."""
+
+    index: int
+    field: Literal["quantity", "unit_price", "stated_amount", "note"]
+    value: str | None = None
+
+
 class ReviewDecisionRequest(BaseModel):
     outcome: str
     reason: str
+    header_edits: list[HeaderEdit] = Field(default_factory=list)
+    line_item_edits: list[LineItemEdit] = Field(default_factory=list)
 
 
 class TriggerRequest(BaseModel):
@@ -345,6 +366,120 @@ def _to_detail(document_name: str, snapshot: Any, deps: Deps) -> RunDetail:
     )
 
 
+def _stringify(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _apply_edits(
+    document_name: str,
+    body: ReviewDecisionRequest,
+    deps: Deps,
+    checkpointer: BaseCheckpointSaver[Any],
+) -> None:
+    """Ticket 19 / ADR-0012: apply staged field edits to the checkpointed invoice
+    before the review's outcome resumes the graph. Writes a human-sourced `Correction`
+    per edit, recomputes flags and the USD total against the edited invoice using the
+    same `validate_invoice` the `validate` node calls, and writes the result into the
+    checkpoint via `update_state` — `resume_invoice` then runs completely unchanged,
+    seeing an invoice that looks as if it always held these values.
+    """
+    config = _config_for(document_name)
+    graph = build_graph(deps, checkpointer)
+    snapshot = graph.get_state(config)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail=f"no such run: {document_name!r}")
+
+    if not snapshot.interrupts:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{document_name!r} is not awaiting review — edits only apply to an "
+                "escalated invoice"
+            ),
+        )
+
+    values = snapshot.values
+    invoice_dict = values.get("invoice")
+    if invoice_dict is None:
+        raise HTTPException(status_code=409, detail="no invoice recorded for this run")
+    invoice = Invoice.model_validate(invoice_dict)
+
+    correction_reason = body.reason.strip() or "reviewer correction"
+    new_invoice_dict = invoice.model_dump(mode="json")
+    human_corrections: list[Correction] = []
+
+    for edit in body.header_edits:
+        # Read `raw` from `new_invoice_dict`, not `invoice`: a second edit to the same
+        # field in this same request must record what the first edit just wrote as its
+        # `raw`, not the pre-edit value both would otherwise wrongly claim to overwrite.
+        raw = _stringify(new_invoice_dict.get(edit.field))
+        new_invoice_dict[edit.field] = edit.value
+        human_corrections.append(
+            Correction(
+                field=edit.field,
+                raw=raw,
+                value=_stringify(edit.value),
+                reason=correction_reason,
+                confidence=1.0,
+                source="human",
+            )
+        )
+
+    for line_edit in body.line_item_edits:
+        if line_edit.index < 0 or line_edit.index >= len(invoice.line_items):
+            raise HTTPException(
+                status_code=422, detail=f"no line item at index {line_edit.index}"
+            )
+        raw = _stringify(new_invoice_dict["line_items"][line_edit.index].get(line_edit.field))
+        new_invoice_dict["line_items"][line_edit.index][line_edit.field] = line_edit.value
+        human_corrections.append(
+            Correction(
+                field=f"line_items[{line_edit.index}].{line_edit.field}",
+                raw=raw,
+                value=_stringify(line_edit.value),
+                reason=correction_reason,
+                confidence=1.0,
+                source="human",
+            )
+        )
+
+    try:
+        edited_invoice = Invoice.model_validate(new_invoice_dict)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    result = validate_invoice(edited_invoice, deps)
+
+    existing_flags = [Flag.model_validate(f) for f in values.get("flags") or []]
+    preserved_flags = [f for f in existing_flags if f.code not in VALIDATION_FLAG_CODES]
+    existing_corrections = [Correction.model_validate(c) for c in values.get("corrections") or []]
+    preserved_corrections = [
+        c for c in existing_corrections if c.field not in VALIDATION_CORRECTION_FIELDS
+    ]
+
+    # `as_node="await_review"` would tell LangGraph this write IS that node's
+    # completed output, which resolves the routing past it immediately — the
+    # interrupt would vanish without ever coming back. `as_node=None` instead just
+    # updates the channels and leaves `await_review` scheduled as the next pending
+    # task; the follow-up `invoke(None, ...)` actually runs it, which re-executes
+    # `interrupt()` fresh against the edited state and produces a real pending
+    # interrupt again — the same shape `resume_invoice` already knows how to resume.
+    graph.update_state(
+        config,
+        {
+            "invoice": edited_invoice.model_dump(mode="json"),
+            "flags": [f.model_dump(mode="json") for f in preserved_flags + result.flags],
+            "corrections": [
+                c.model_dump(mode="json")
+                for c in preserved_corrections + human_corrections + result.corrections
+            ],
+            "usd_total": str(result.usd_total) if result.usd_total is not None else None,
+        },
+        as_node=None,
+    )
+    graph.invoke(None, config=config)
+
+
 def create_app(
     deps: Deps, checkpointer: BaseCheckpointSaver[Any], uploads_dir: Path
 ) -> FastAPI:
@@ -430,6 +565,8 @@ def create_app(
             raise HTTPException(
                 status_code=422, detail="outcome must be 'approved' or 'rejected'"
             )
+        if body.header_edits or body.line_item_edits:
+            _apply_edits(document_name, body, observed_deps, checkpointer)
         review = HumanReview(outcome=body.outcome, reason=body.reason)  # type: ignore[arg-type]
         try:
             _resume_invoice(document_name, review, observed_deps, checkpointer=checkpointer)

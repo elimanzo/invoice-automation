@@ -4,9 +4,11 @@ Acme Corp processes supplier invoices by hand: a clerk reads the document, check
 against inventory, chases a VP for approval by email, then pays. It costs **$2M/year**,
 carries a **30% error rate**, and takes **5 days** per invoice.
 
-This is a multi-agent system that runs that whole workflow instead — **ingestion**
-(document in, structured invoice out), **validation** (against the inventory catalogue),
-**approval** (deterministic rules plus an LLM that may only add caution, never overrule
+This is an agentic pipeline that runs that whole workflow instead — **ingestion**
+(document in, structured invoice out, via an LLM extraction step that critiques and
+retries its own reading), **validation** (deterministic, against the inventory catalogue —
+a lookup against ground truth has no business being probabilistic), **approval**
+(deterministic rules plus a tool-calling LLM that may only add caution, never overrule
 one), and **payment** (mocked, idempotent) — with every judgment call recorded as an
 auditable correction, flag, or decision rather than a silent guess. `CONTEXT.md` has the
 full vocabulary; the numbers above are what every feature here is measured against.
@@ -146,7 +148,7 @@ makes `git commit` (no `-m`) open with the format and a reminder to write *why*,
 | Reasoning engine | Grok via xAI's OpenAI-compatible API, behind a provider interface | The only real network call; everything Acme-side is mocked ([ADR-0001](docs/adr/0001-llm-is-the-only-network-dependency.md)) |
 | Ingestion | Structured formats parsed deterministically; the model reads only what needs judgment | A JSON invoice is already extracted; sending it to an LLM adds cost and a hallucination risk ([ADR-0009](docs/adr/0009-deterministic-parsing-for-structured-formats.md)) |
 | Orchestration | LangGraph — nodes, conditional edges, cycles, checkpointer | The workflow is a cyclic graph, not a pipeline ([ADR-0002](docs/adr/0002-langgraph-for-orchestration.md)) |
-| Agents | Four stage agents plus one shared Critic | The brief's "reflection or critique loop": extraction re-checks its own output against the source document and retries on a real problem ([`_critique`](src/invoice_automation/extraction.py)); approval reasons over the invoice and flags before deciding ([ADR-0004](docs/adr/0004-caution-ratchet-for-approval.md)) |
+| Agents | Two LLM-reasoning stages, not five — extraction (with a critique/retry loop) and approval (tool-calling, with a caution ratchet); reconciliation, validation, and payment are deterministic on purpose | The brief's "reflection or critique loop": extraction re-checks its own output against the source document and retries on a real problem ([`_critique`](src/invoice_automation/extraction.py)); approval reasons over the invoice and flags before deciding ([ADR-0004](docs/adr/0004-caution-ratchet-for-approval.md)) |
 | Bad data | Auditable corrections: raw, value, reason, confidence | A 30% error rate is not fixed by being confidently wrong more quietly |
 | Approval | Deterministic rules, LLM may only add caution | Invoice text is untrusted input ([ADR-0004](docs/adr/0004-caution-ratchet-for-approval.md)) |
 | Duplicates | Registry keyed on invoice number; revisions supersede | INV-1011 arrives twice; INV-1004 has a revision worth $4,050 |

@@ -154,6 +154,12 @@ class Correction(BaseModel):
     Written for every mutation, always — an audit trail, not an exception path. See
     CONTEXT.md. Repair itself arrives with ticket 06; this model exists now so the
     primary seam's return shape does not change shape later.
+
+    `source` distinguishes a reviewer's own edit (ticket 19) from every other
+    correction, which the pipeline writes on its own. A human correction's `raw` is
+    the value it overwrites — whatever was last stored for that field — not the
+    original document text, which may already be several corrections removed by then.
+    See ADR-0012.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -163,6 +169,7 @@ class Correction(BaseModel):
     value: str
     reason: str
     confidence: float = Field(ge=0.0, le=1.0)
+    source: Literal["model", "human"] = "model"
 
 
 class Decision(BaseModel):

@@ -44,9 +44,16 @@ holds known **vendors**. This is the ground truth **validation** checks against.
 
 ### Correction
 A record that the system stored something different from what a document literally said.
-Carries `field`, `raw`, `value`, `reason`, `confidence`. Corrections are written for every
-mutation, always — they are an audit trail, not an exception path, and they never require a
-human. Low `confidence` triggers **escalation** rather than a guess.
+Carries `field`, `raw`, `value`, `reason`, `confidence`, `source`. Corrections are written for
+every mutation, always — they are an audit trail, not an exception path, and they never
+require a human. Low `confidence` triggers **escalation** rather than a guess.
+
+`source` is `"model"` or `"human"` — a **reviewer** editing a field on an escalated invoice
+also writes a `Correction`, never a silent overwrite, with `confidence` `1.0` (a human
+assertion is maximally sure) and `source: "human"`. For a human correction, `raw` is the
+value being overwritten — whatever was last stored for that field — not the original
+document text; several corrections may already sit between the document and that value. See
+ADR-0012.
 
 Example: INV-1012 says `26-Jan-2O26`; the correction records the letter-O-for-zero
 substitution at 0.95 confidence and stores `2026-01-26`.
