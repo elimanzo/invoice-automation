@@ -1,0 +1,11 @@
+{
+  "invoice_number": "INV-9002",
+  "vendor": {"name": "Widgets Inc."},
+  "date": "2026-01-15",
+  "due_date": "2026-02-15",
+  "line_items": [
+    {"item": "ThresholdWidget", "quantity": 1}
+  ],
+  "total": "9999.00",
+  "currency": "USD"
+}
