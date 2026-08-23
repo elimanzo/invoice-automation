@@ -21,6 +21,31 @@ export interface StageRecord {
   detail: string | null;
 }
 
+export interface LineItem {
+  item: string;
+  quantity: number;
+  unit_price: string | null;
+  stated_amount: string | null;
+  note: string | null;
+  amount: string | null;
+}
+
+export interface Invoice {
+  invoice_number: string | null;
+  vendor: { name: string; address: string | null };
+  invoice_date: string | null;
+  due_date: string | null;
+  line_items: LineItem[];
+  subtotal: string | null;
+  tax_amount: string | null;
+  total: string | null;
+  currency: string;
+  payment_terms: string | null;
+  purchase_order_reference: string | null;
+  notes: string | null;
+  revision: string | null;
+}
+
 export interface Flag {
   severity: "fatal" | "soft" | "info";
   code: string;
@@ -52,18 +77,24 @@ export interface LlmCallRecord {
   response: string;
 }
 
+export interface HumanReview {
+  outcome: "approved" | "rejected";
+  reason: string;
+}
+
 export interface RunDetail {
   document_name: string;
   document_format: string | null;
   raw_text: string | null;
-  invoice: unknown;
+  invoice: Invoice | null;
   flags: Flag[];
   decision: { outcome: string; reasoning: string } | null;
   corrections: Correction[];
   tool_calls: ToolCallRecord[];
-  human_review: unknown;
+  human_review: HumanReview | null;
   stages: StageRecord[];
   llm_calls: LlmCallRecord[];
+  risk_score: number;
   awaiting_review: boolean;
 }
 

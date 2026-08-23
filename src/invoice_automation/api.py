@@ -26,6 +26,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import BaseModel
 
+from .approval import compute_risk_score
 from .batch import BatchSummary, run_batch
 from .config import MANUAL_COST_PER_INVOICE_USD, MANUAL_PROCESSING_DAYS
 from .deps import Deps
@@ -160,6 +161,7 @@ class RunDetail(BaseModel):
     human_review: HumanReview | None
     stages: list[dict[str, Any]]
     llm_calls: list[LlmCallSummary]
+    risk_score: int
     awaiting_review: bool
 
 
@@ -261,6 +263,7 @@ def _to_llm_call(event: LlmCallEvent) -> LlmCallSummary:
 def _to_detail(document_name: str, snapshot: Any, deps: Deps) -> RunDetail:
     values = snapshot.values
     invoice = values.get("invoice")
+    flags_for_risk = [Flag.model_validate(f) for f in values.get("flags") or []]
     stages = [
         {
             "stage": s.stage,
@@ -275,7 +278,7 @@ def _to_detail(document_name: str, snapshot: Any, deps: Deps) -> RunDetail:
         document_format=values.get("document_format"),
         raw_text=values.get("raw_text"),
         invoice=Invoice.model_validate(invoice) if invoice else None,
-        flags=[Flag.model_validate(f) for f in values.get("flags") or []],
+        flags=flags_for_risk,
         decision=Decision.model_validate(values["decision"]) if values.get("decision") else None,
         corrections=[Correction.model_validate(c) for c in values.get("corrections") or []],
         tool_calls=[ToolCallRecord.model_validate(tc) for tc in values.get("tool_calls") or []],
@@ -284,6 +287,7 @@ def _to_detail(document_name: str, snapshot: Any, deps: Deps) -> RunDetail:
         else None,
         stages=stages,
         llm_calls=[_to_llm_call(e) for e in deps.tracer.llm_calls_for(document_name)],
+        risk_score=compute_risk_score(flags_for_risk),
         awaiting_review=bool(snapshot.interrupts),
     )
 

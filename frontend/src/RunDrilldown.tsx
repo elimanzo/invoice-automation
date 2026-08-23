@@ -59,6 +59,16 @@ export function RunDrilldown() {
         </section>
       )}
 
+      {detail.human_review && (
+        <section>
+          <h2>Reviewer decision</h2>
+          <p>
+            <span className="status">{detail.human_review.outcome}</span>
+          </p>
+          <p>{detail.human_review.reason}</p>
+        </section>
+      )}
+
       <section>
         <h2>Stages</h2>
         <table className="pipeline-table">
