@@ -17,7 +17,12 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from .catalogue import seed_catalogue
 from .config import MissingApiKey, Settings
 from .deps import build_deps
-from .documents import UndecodableDocument, UnsupportedDocument, load_document
+from .documents import (
+    UndecodableDocument,
+    UnreadableDocument,
+    UnsupportedDocument,
+    load_document,
+)
 from .extraction import ExtractionFailed
 from .graph import RunResult, run_invoice
 from .models import Decision, Flag, Invoice
@@ -74,7 +79,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         document = load_document(args.invoice_path)
-    except (FileNotFoundError, UnsupportedDocument, UndecodableDocument) as exc:
+    except (
+        FileNotFoundError,
+        UnsupportedDocument,
+        UndecodableDocument,
+        UnreadableDocument,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
