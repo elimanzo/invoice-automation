@@ -57,6 +57,12 @@ class LlmCallEvent:
 
 @runtime_checkable
 class Tracer(Protocol):
+    def stage_started(self, run_id: str, stage: str) -> None:
+        """A stage began executing — not part of the persisted trace (ticket 12 only
+        records completed stages), just a live signal ticket 13's SSE stream reads so it
+        can report a stage's entry as well as its exit."""
+        ...
+
     def record_stage(self, event: StageEvent) -> None: ...
 
     def record_llm_call(self, event: LlmCallEvent) -> None: ...
@@ -81,6 +87,9 @@ class InMemoryTracer:
 
     stages: list[StageEvent] = field(default_factory=list)
     llm_calls: list[LlmCallEvent] = field(default_factory=list)
+
+    def stage_started(self, run_id: str, stage: str) -> None:
+        pass
 
     def record_stage(self, event: StageEvent) -> None:
         self.stages.append(event)
@@ -137,6 +146,9 @@ class SqliteTracer:
         path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(path)) as conn, conn:
             conn.executescript(_SCHEMA)
+
+    def stage_started(self, run_id: str, stage: str) -> None:
+        pass
 
     def record_stage(self, event: StageEvent) -> None:
         with closing(sqlite3.connect(self._path)) as conn, conn:
@@ -206,6 +218,7 @@ def traced_stage(tracer: Tracer, run_id: str, stage: str) -> Iterator[None]:
     that would be wrong twice over — it isn't a failure, and the eventual successful
     completion already gets its own entry.
     """
+    tracer.stage_started(run_id, stage)
     start = time.perf_counter()
     try:
         yield
