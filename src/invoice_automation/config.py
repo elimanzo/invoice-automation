@@ -21,6 +21,17 @@ DEFAULT_BASE_URL = "https://api.x.ai/v1"
 DEFAULT_MODEL = "grok-4"
 DEFAULT_DATA_DIR = ".data"
 
+# Total attempts at extraction, including the first: 2 means one retry. A schema
+# violation is fed back to the model as feedback before the retry (ticket 03's
+# self-correction loop). A module constant rather than a Settings field: nothing
+# threads Settings through to extraction.py, and a per-run override that no caller
+# could actually set would be a knob that does nothing.
+DEFAULT_EXTRACTION_MAX_ATTEMPTS = 2
+
+
+class MissingApiKey(Exception):
+    """A real provider was requested but no API key is configured."""
+
 
 def _env(name: str, default: str) -> str:
     """Read an environment variable, treating empty as unset.

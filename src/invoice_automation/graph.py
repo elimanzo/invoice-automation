@@ -37,7 +37,12 @@ from .documents import Document
 from .extraction import extract_invoice
 from .models import Correction, Decision, DocumentFormat, Flag, Invoice
 from .payments import PaymentResult
+from .structured_parsing import StructuredParseFailed, parse_structured
 from .validation import validate_invoice
+
+_STRUCTURED_FORMATS = frozenset(
+    {DocumentFormat.JSON, DocumentFormat.CSV, DocumentFormat.XML}
+)
 
 
 class PipelineState(TypedDict, total=False):
@@ -53,6 +58,9 @@ class PipelineState(TypedDict, total=False):
     decision: dict[str, Any] | None
     payment: dict[str, Any] | None
     corrections: list[dict[str, Any]]
+    extraction_method: str
+    """Which path ingestion took: "deterministic" or "model" (ADR-0009). Recorded so a
+    run's trace can show it without downstream code needing to care which one ran."""
 
 
 @dataclass(frozen=True)
@@ -64,6 +72,7 @@ class RunResult:
     decision: Decision | None
     payment: PaymentResult | None
     corrections: list[Correction]
+    extraction_method: str
 
 
 def _ingest(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
@@ -72,8 +81,19 @@ def _ingest(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
         format=DocumentFormat(state["document_format"]),
         raw_text=state["raw_text"],
     )
+
+    if document.format in _STRUCTURED_FORMATS:
+        try:
+            invoice = parse_structured(document)
+            return {
+                "invoice": invoice.model_dump(mode="json"),
+                "extraction_method": "deterministic",
+            }
+        except StructuredParseFailed:
+            pass  # Falls through to model extraction below.
+
     invoice = extract_invoice(document, deps)
-    return {"invoice": invoice.model_dump(mode="json")}
+    return {"invoice": invoice.model_dump(mode="json"), "extraction_method": "model"}
 
 
 def _validate(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
@@ -84,7 +104,8 @@ def _validate(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
 
 def _approve(state: PipelineState) -> dict[str, Any]:
     invoice = Invoice.model_validate(state["invoice"])
-    decision = decide(invoice)
+    flags = [Flag.model_validate(f) for f in state.get("flags", [])]
+    decision = decide(invoice, flags)
     return {"decision": decision.model_dump(mode="json")}
 
 
@@ -178,4 +199,5 @@ def run_invoice(
         decision=Decision.model_validate(final["decision"]) if final.get("decision") else None,
         payment=PaymentResult(**final["payment"]) if final.get("payment") else None,
         corrections=[Correction.model_validate(c) for c in final.get("corrections", [])],
+        extraction_method=final.get("extraction_method", "model"),
     )
