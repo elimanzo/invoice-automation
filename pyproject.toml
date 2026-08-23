@@ -45,3 +45,7 @@ addopts = "-q"
 python_version = "3.11"
 strict = true
 files = ["src", "tests", "main.py"]
+# Without this, a src-layout package plus a non-package `tests/` tree makes mypy resolve
+# the same test file under two module names and abort before checking anything.
+explicit_package_bases = true
+mypy_path = "src"

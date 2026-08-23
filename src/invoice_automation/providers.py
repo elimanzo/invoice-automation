@@ -229,13 +229,15 @@ class FakeProvider:
     an empty response set: that raises at construction rather than failing later with a
     confusing per-document error.
 
-    Ticket 18 adds a second, larger set of real recorded responses — `tests/cassettes/`
-    — for the "recorded" test layer (ADR-0006), loaded through this same constructor.
-    The package's own bundled fixtures here (`sample_responses/`, still hand-written)
-    are deliberately left as-is: they only back the CLI's two no-key quickstart
-    examples and a handful of unit tests, and swapping them for real model output
-    would risk changing what those examples print for no requirement that asked for
-    it. The lookup does not change either way.
+    Two response sets, one loader: `tests/cassettes/` backs the "recorded" test layer
+    (ADR-0006), and the package's own `sample_responses/` backs every keyless run of
+    the CLI and dashboard. The bundled set now covers each document in
+    `data/invoices/` that needs the model at all — real Grok responses, copied from the
+    cassettes — so a clean clone with no key processes the whole provided corpus rather
+    than reporting `failed` on everything outside the two quickstart examples. A
+    keyless run failing on most of the sample data reads as a broken system, not as a
+    missing credential. `invoice_1001` and `invoice_1013` stay hand-written: unit tests
+    assert on their exact contents. The lookup does not change either way.
     """
 
     responses: dict[str, dict[str, Any]] = field(default_factory=dict)

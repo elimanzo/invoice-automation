@@ -72,11 +72,12 @@ One bad document never stops the rest; a summary is reported at the end (approve
 rejected, escalated, failed counts). This is the same code path
 [the eval harness](docs/adr/0006-recorded-responses-for-tests.md) drives over the golden set.
 
-Without a key, the deterministic (JSON/CSV/XML) documents process normally; the text and
-PDF documents report `failed` — the fake provider only ships pre-recorded answers for the
-two documents the quickstart above uses ([ADR-0009](docs/adr/0009-deterministic-parsing-for-structured-formats.md)).
-`python scripts/record_cassettes.py` plus a real `XAI_API_KEY`, or `--provider grok`, gets
-every document a real answer.
+This runs with no key. The deterministic (JSON/CSV/XML) documents never needed the model
+([ADR-0009](docs/adr/0009-deterministic-parsing-for-structured-formats.md)); the text and
+PDF ones are answered from real Grok responses recorded once and bundled with the package,
+so the whole provided corpus reaches a decision on a clean clone. `python
+scripts/record_cassettes.py` plus a real `XAI_API_KEY`, or `--provider grok`, re-records
+against the live model instead.
 
 ## Dashboard
 
