@@ -14,7 +14,7 @@ export function App() {
         <nav className="nav">
           <div className="nav__brand">Invoice Automation</div>
           <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : "")}>
-            Pipeline
+            Processing
           </NavLink>
           <NavLink to="/ledger" className={({ isActive }) => (isActive ? "active" : "")}>
             Ledger

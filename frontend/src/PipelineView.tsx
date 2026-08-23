@@ -29,16 +29,16 @@ export function PipelineView() {
 
   return (
     <div className="view">
-      <h1>Pipeline</h1>
+      <h1>Processing</h1>
       <p className="view__subtitle">
-        Every invoice currently moving through ingestion, reconciliation, validation, and
-        approval, updating live as each one progresses.
+        Every invoice currently being read, checked, and approved, updating live as each
+        one moves along.
       </p>
       <ConnectionBanner status={status} />
       {rows.length === 0 ? (
         <p className="empty">
-          No invoices yet. Process one from the command line, or point the API at a
-          document or folder to get started.
+          Nothing is processing right now. New invoices will appear here as soon as
+          they're submitted.
         </p>
       ) : (
         <table className="pipeline-table">
