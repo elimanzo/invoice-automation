@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RunDetail, RunSummary, getRun, listReviews, submitReview } from "./api";
+import { RunDetail, RunSummary, getRun, listReviews, sourceUrl, submitReview } from "./api";
 import { severityClassName, severityTooltip } from "./severity";
 import { usePolled } from "./usePolled";
 
@@ -144,7 +144,26 @@ function ReviewCard({
       <button className="link-button" onClick={() => setShowSource((v) => !v)}>
         {showSource ? "Hide source document" : "View source document"}
       </button>
-      {showSource && <pre className="source-view">{detail.raw_text ?? "(not available)"}</pre>}
+      {showSource &&
+        (detail.document_format === "pdf" && detail.document_path ? (
+          <>
+            <iframe
+              className="source-view source-view--pdf"
+              title="Source document"
+              src={sourceUrl(detail.document_name)}
+            />
+            <a
+              className="source-view__open-tab"
+              href={sourceUrl(detail.document_name)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open in new tab
+            </a>
+          </>
+        ) : (
+          <pre className="source-view">{detail.raw_text ?? "(not available)"}</pre>
+        ))}
 
       <div className="review-card__decision">
         <label htmlFor={`reason-${detail.document_name}`}>Your decision</label>

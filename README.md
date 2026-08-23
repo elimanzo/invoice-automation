@@ -89,6 +89,12 @@ python scripts/rebuild_dashboard.py    # npm install && npm run build, then stam
 `frontend/src` disagree — a source change with no matching rebuild is caught rather than
 shipped silently stale.
 
+Iterating on the front end itself: run the backend (`python -m invoice_automation.web`)
+and, in `frontend/`, `npm install && npm run dev` for hot-module reload against it
+(`vite.config.ts` proxies `/runs`, `/reviews`, `/status`, `/impact`, and `/events` to
+`:8000`). Still run `rebuild_dashboard.py` before committing — the dev server never
+writes to `src/invoice_automation/static/`.
+
 ## Docker
 
 No local Python (or Node) installation needed at all:

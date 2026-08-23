@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { RunSummary, listRuns } from "./api";
 import { ImpactStrip } from "./ImpactStrip";
 import { SEVERITY_RANK, severityClassName, severityTooltip } from "./severity";
-import { decisionClassName } from "./status";
+import { runStatusClassName, runStatusLabel } from "./status";
 import { usePolled } from "./usePolled";
 
 type SortKey = "document_name" | "vendor" | "amount" | "outcome" | "max_flag_severity";
@@ -169,10 +169,15 @@ export function LedgerView() {
                 </td>
                 <td>{run.vendor ?? "—"}</td>
                 <td>
-                  {run.amount ?? "—"} {run.currency ?? ""}
+                  {run.amount === null ? "—" : Number(run.amount).toFixed(2)} {run.currency ?? ""}
                 </td>
                 <td>
-                  <span className={decisionClassName(run.outcome)}>{run.outcome ?? "pending"}</span>
+                  <span
+                    className={runStatusClassName(run)}
+                    title={run.failure_detail ?? undefined}
+                  >
+                    {runStatusLabel(run)}
+                  </span>
                 </td>
                 <td>
                   <span

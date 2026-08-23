@@ -38,6 +38,9 @@ class Deps:
     """Which model `provider` calls — carried here rather than read off the provider
     itself, since `FakeProvider` doesn't name one. Only used for cost accounting
     (ticket 12); it names nothing the pipeline behaves differently for."""
+    provider_name: str = "fake"
+    """"grok" or "fake" — same reasoning as `model`: only for display (the dashboard's
+    header badge), never branched on by the pipeline itself."""
     tracer: Tracer = field(default_factory=InMemoryTracer)
     cache: LLMCache = field(default_factory=NullCache)
     overrides: OverrideStore = field(default_factory=InMemoryOverrideStore)
@@ -55,18 +58,20 @@ def build_deps(settings: Settings | None = None, *, provider: str | None = None)
     """
     settings = settings or Settings.from_env()
     data_dir = Path(settings.data_dir)
+    chosen = provider or ("grok" if settings.has_api_key else "fake")
 
     cache: LLMCache = (
         SqliteCache(data_dir / "llm_cache.db") if settings.cache_enabled else NullCache()
     )
 
     return Deps(
-        provider=_build_provider(settings, provider),
+        provider=_build_provider(settings, chosen),
         catalogue=SqliteCatalogue(data_dir / settings.catalogue_filename),
         payment=MockPayment(),
         clock=SystemClock(),
         registry=SqliteRegistry(data_dir / settings.registry_filename),
         model=settings.model,
+        provider_name=chosen,
         tracer=SqliteTracer(data_dir / "trace.db"),
         cache=cache,
         overrides=SqliteOverrideStore(data_dir / "overrides.db"),

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import BaseModel
@@ -126,6 +126,15 @@ class RunNotFound(Exception):
     """No checkpointed state exists under this document name."""
 
 
+_SOURCE_MEDIA_TYPES: dict[str, str] = {
+    "pdf": "application/pdf",
+    "text": "text/plain",
+    "json": "application/json",
+    "csv": "text/csv",
+    "xml": "application/xml",
+}
+
+
 class RunSummary(BaseModel):
     document_name: str
     outcome: str | None
@@ -136,6 +145,12 @@ class RunSummary(BaseModel):
     vendor: str | None
     correction_count: int
     max_flag_severity: str | None
+    failed_stage: str | None
+    """Which stage raised, when `outcome` is None because the run never reached a
+    decision — e.g. "reconcile" for a revision-after-payment conflict, or "ingest" for
+    a missing LLM cassette. Distinguishes "errored, needs attention" from "genuinely
+    hasn't run yet", which a bare `outcome: null` cannot (dashboard finding, 2026)."""
+    failure_detail: str | None
 
 
 class LlmCallSummary(BaseModel):
@@ -152,6 +167,7 @@ class LlmCallSummary(BaseModel):
 class RunDetail(BaseModel):
     document_name: str
     document_format: str | None
+    document_path: str | None
     raw_text: str | None
     invoice: Invoice | None
     flags: list[Flag]
@@ -163,6 +179,15 @@ class RunDetail(BaseModel):
     llm_calls: list[LlmCallSummary]
     risk_score: int
     awaiting_review: bool
+
+
+class StatusSummary(BaseModel):
+    """Which reasoning engine is answering right now — the dashboard's header badge,
+    so "why did this decision look odd" doesn't start with "wait, was this even
+    Grok?"."""
+
+    provider: str
+    model: str
 
 
 class ImpactSummary(BaseModel):
@@ -222,7 +247,7 @@ def _run_state(
     return snapshot
 
 
-def _to_summary(document_name: str, snapshot: Any) -> RunSummary:
+def _to_summary(document_name: str, snapshot: Any, tracer: Tracer) -> RunSummary:
     values = snapshot.values
     invoice = values.get("invoice")
     decision = values.get("decision")
@@ -234,6 +259,14 @@ def _to_summary(document_name: str, snapshot: Any) -> RunSummary:
         amount = invoice.get("total")
         currency = invoice.get("currency")
         vendor = (invoice.get("vendor") or {}).get("name")
+
+    failed_stage = None
+    failure_detail = None
+    if decision is None:
+        failed = next((s for s in reversed(tracer.stages_for(document_name)) if not s.ok), None)
+        if failed is not None:
+            failed_stage, failure_detail = failed.stage, failed.detail
+
     return RunSummary(
         document_name=document_name,
         outcome=decision["outcome"] if decision else None,
@@ -241,6 +274,8 @@ def _to_summary(document_name: str, snapshot: Any) -> RunSummary:
         currency=currency,
         flag_count=len(flags),
         timestamp=snapshot.created_at,
+        failed_stage=failed_stage,
+        failure_detail=failure_detail,
         vendor=vendor,
         correction_count=len(values.get("corrections") or []),
         max_flag_severity=_max_severity(flags),
@@ -276,6 +311,7 @@ def _to_detail(document_name: str, snapshot: Any, deps: Deps) -> RunDetail:
     return RunDetail(
         document_name=document_name,
         document_format=values.get("document_format"),
+        document_path=values.get("document_path"),
         raw_text=values.get("raw_text"),
         invoice=Invoice.model_validate(invoice) if invoice else None,
         flags=flags_for_risk,
@@ -321,7 +357,10 @@ def create_app(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> FastAPI:
 
     @app.get("/runs")
     def list_runs() -> list[RunSummary]:
-        return [_to_summary(run_id, snapshot) for run_id, snapshot in _iter_snapshots()]
+        return [
+            _to_summary(run_id, snapshot, observed_deps.tracer)
+            for run_id, snapshot in _iter_snapshots()
+        ]
 
     @app.get("/runs/{document_name}")
     def get_run(document_name: str) -> RunDetail:
@@ -331,10 +370,36 @@ def create_app(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"no such run: {document_name!r}")
         return _to_detail(document_name, snapshot, observed_deps)
 
+    @app.get("/runs/{document_name}/source")
+    def get_run_source(document_name: str) -> FileResponse:
+        """The original document, unmodified — a PDF renders as a PDF here instead of
+        as its (often garbled) extracted text, which is what `raw_text` gives you and
+        is misleading for anything but plain text (SPEC.md #62)."""
+        try:
+            snapshot = _run_state(document_name, observed_deps, checkpointer)
+        except RunNotFound:
+            raise HTTPException(status_code=404, detail=f"no such run: {document_name!r}")
+        path_str = snapshot.values.get("document_path")
+        if not path_str:
+            raise HTTPException(status_code=404, detail="no source document recorded for this run")
+        path = Path(path_str)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail=f"source document no longer on disk: {path}")
+        media_type = _SOURCE_MEDIA_TYPES.get(snapshot.values.get("document_format"), "application/octet-stream")
+        # `filename=` makes FileResponse default to `Content-Disposition: attachment`,
+        # which forces a download instead of letting the browser render it — exactly
+        # backwards for an <iframe> meant to show a PDF inline. Set the header
+        # ourselves as "inline" instead.
+        return FileResponse(
+            path,
+            media_type=media_type,
+            headers={"Content-Disposition": f'inline; filename="{path.name}"'},
+        )
+
     @app.get("/reviews")
     def list_reviews() -> list[RunSummary]:
         return [
-            _to_summary(run_id, snapshot)
+            _to_summary(run_id, snapshot, observed_deps.tracer)
             for run_id, snapshot in _iter_snapshots()
             if snapshot.interrupts
         ]
@@ -381,6 +446,10 @@ def create_app(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"no such directory: {directory}")
         background_tasks.add_task(_process_directory, directory)
         return TriggerResponse(status="processing", document_name=None)
+
+    @app.get("/status")
+    def get_status() -> StatusSummary:
+        return StatusSummary(provider=deps.provider_name, model=deps.model)
 
     @app.get("/impact")
     def get_impact() -> ImpactSummary:

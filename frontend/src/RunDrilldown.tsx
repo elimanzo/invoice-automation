@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { RunDetail, getRun } from "./api";
+import { RunDetail, getRun, sourceUrl } from "./api";
 import { severityClassName, severityTooltip } from "./severity";
 import { stageLabel } from "./stages";
 import { decisionClassName } from "./status";
@@ -193,7 +193,25 @@ export function RunDrilldown() {
       <section className="drilldown-columns">
         <div>
           <h2>Source document</h2>
-          <pre className="source-view">{detail.raw_text ?? "(not available)"}</pre>
+          {detail.document_format === "pdf" && detail.document_path ? (
+            <>
+              <iframe
+                className="source-view source-view--pdf"
+                title="Source document"
+                src={sourceUrl(detail.document_name)}
+              />
+              <a
+                className="source-view__open-tab"
+                href={sourceUrl(detail.document_name)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open in new tab
+              </a>
+            </>
+          ) : (
+            <pre className="source-view">{detail.raw_text ?? "(not available)"}</pre>
+          )}
         </div>
         <div>
           <h2>Extracted invoice</h2>

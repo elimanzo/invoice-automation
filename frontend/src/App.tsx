@@ -3,6 +3,7 @@ import { PipelineView } from "./PipelineView";
 import { LedgerView } from "./LedgerView";
 import { RunDrilldown } from "./RunDrilldown";
 import { QueueView } from "./QueueView";
+import { StatusBadge } from "./StatusBadge";
 
 // HashRouter, not BrowserRouter: the bundle is served as plain static files with no
 // server-side catch-all route, so every path must resolve to the one `index.html`
@@ -22,6 +23,7 @@ export function App() {
           <NavLink to="/queue" className={({ isActive }) => (isActive ? "active" : "")}>
             Review queue
           </NavLink>
+          <StatusBadge />
         </nav>
         <main className="content">
           <Routes>

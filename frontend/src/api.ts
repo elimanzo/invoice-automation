@@ -12,6 +12,8 @@ export type RunSummary = {
   vendor: string | null;
   correction_count: number;
   max_flag_severity: string | null;
+  failed_stage: string | null;
+  failure_detail: string | null;
 };
 
 export type StageRecord = {
@@ -85,6 +87,7 @@ export type HumanReview = {
 export type RunDetail = {
   document_name: string;
   document_format: string | null;
+  document_path: string | null;
   raw_text: string | null;
   invoice: Invoice | null;
   flags: Flag[];
@@ -96,6 +99,11 @@ export type RunDetail = {
   llm_calls: LlmCallRecord[];
   risk_score: number;
   awaiting_review: boolean;
+};
+
+export type StatusSummary = {
+  provider: string;
+  model: string;
 };
 
 export type ImpactSummary = {
@@ -131,8 +139,19 @@ export function getRun(documentName: string): Promise<RunDetail> {
   return getJson<RunDetail>(`/runs/${encodeURIComponent(documentName)}`);
 }
 
+// The original document, byte-for-byte — a PDF renders as a PDF here rather than as
+// its extracted text, which is what `raw_text` gives you and reads as garbled for a
+// PDF or scanned document (SPEC.md #62).
+export function sourceUrl(documentName: string): string {
+  return `/runs/${encodeURIComponent(documentName)}/source`;
+}
+
 export function listReviews(): Promise<RunSummary[]> {
   return getJson<RunSummary[]>("/reviews");
+}
+
+export function getStatus(): Promise<StatusSummary> {
+  return getJson<StatusSummary>("/status");
 }
 
 export function getImpact(): Promise<ImpactSummary> {
