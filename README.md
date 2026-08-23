@@ -14,9 +14,15 @@ full vocabulary; the numbers above are what every feature here is measured again
 ## Install
 
 ```bash
-python -m venv .venv && .venv/Scripts/activate    # or: source .venv/bin/activate
+python -m venv .venv
+source .venv/Scripts/activate    # Windows (Git Bash); macOS/Linux: source .venv/bin/activate
+# PowerShell: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 ```
+
+Activation only takes effect if you `source` it (or `.` it) — running the script directly
+spawns a subshell that exits immediately and changes nothing in your current one. Confirm it
+worked before installing: `which python` should point inside `.venv`, not a system Python.
 
 No API key needed. Without one the system uses a fake reasoning provider that replays
 recorded responses, so a clean clone runs the tests and the CLI as-is
