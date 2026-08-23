@@ -216,3 +216,27 @@ def test_contradicting_copies_do_not_pay_and_both_values_appear(scripted_deps: D
     assert contradiction_flags
     message = contradiction_flags[0].message
     assert "200.00" in message and "999.00" in message
+
+
+def test_a_document_silent_on_currency_does_not_false_contradict_an_explicit_one(
+    scripted_deps: Deps,
+) -> None:
+    """`Invoice.currency` defaults to "USD" rather than None, so a document that never
+    mentions currency looks — field for field — identical to one that explicitly (and
+    correctly) states USD. A second document stating a genuinely different currency
+    must still register as an enrichment (the first document simply never said), not a
+    contradiction: nothing about the two documents actually disagrees."""
+    provider = scripted_deps.provider
+    assert isinstance(provider, ScriptedProvider)
+    provider.responses["invoice_1001.txt"] = _clean_widget_a(2, "100.00", invoice_number="INV-4001")
+
+    first = run_invoice(load_document(INVOICES / "invoice_1001.txt"), scripted_deps)
+    assert first.decision is not None and first.decision.outcome == "approved"
+
+    provider.responses["invoice_1002.txt"] = _clean_widget_a(
+        2, "100.00", invoice_number="INV-4001", currency="EUR"
+    )
+    second = run_invoice(load_document(INVOICES / "invoice_1002.txt"), scripted_deps)
+
+    assert not any(f.code == "duplicate_contradiction" for f in second.flags)
+    assert second.invoice is not None and second.invoice.currency == "EUR"

@@ -47,13 +47,18 @@ from .registry import normalize_invoice_identity
 # two documents with even a trivially different vendor object (a stray space, an
 # address one has and the other doesn't) hard-contradict, which is a much more
 # aggressive trigger than this ticket's real cases call for.
+#
+# Currency — same defect as vendor, for the same reason: `Invoice.currency` defaults to
+# "USD" rather than None when a document is silent about it, so it can never register as
+# "one side is missing this" either. Comparing it here would hard-contradict any document
+# that simply never mentions currency against one that explicitly (and correctly) states
+# a non-USD currency, even though nothing actually conflicts.
 _COMPARABLE_FIELDS = (
     "invoice_date",
     "due_date",
     "subtotal",
     "tax_amount",
     "total",
-    "currency",
     "payment_terms",
     "purchase_order_reference",
 )
