@@ -149,6 +149,12 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
         expected_decision="escalated",
         note="authored: contradicting-duplicate pair, the contradiction — hard-flagged",
     ),
+    GoldenCase(
+        document_name="invoice_9004_image_only.pdf",
+        expected_decision=None,
+        expected_error="image-only PDF",
+        note="authored: no text layer at all, fails extraction outright rather than reaching a decision",
+    ),
 )
 
 _GOLDEN_CASES_BY_NAME: dict[str, GoldenCase] = {c.document_name: c for c in GOLDEN_CASES}
@@ -284,7 +290,7 @@ def _score_case(case: GoldenCase, item: BatchItem) -> CaseResult:
             field_scores.append(_field("vendor_name", expected.vendor_name, invoice.vendor.name))
         if expected.total is not None:
             actual_total = str(invoice.total) if invoice.total is not None else None
-            field_scores.append(_field("total", expected.total, actual_total))
+            field_scores.append(_field("total", expected.total, actual_total, numeric=True))
         if expected.currency is not None:
             field_scores.append(_field("currency", expected.currency, invoice.currency))
 
@@ -299,11 +305,14 @@ def _score_case(case: GoldenCase, item: BatchItem) -> CaseResult:
     )
 
 
-def _field(name: str, expected: str, actual: str | None) -> FieldScore:
+def _field(name: str, expected: str, actual: str | None, *, numeric: bool = False) -> FieldScore:
     matched = actual == expected
-    if not matched and actual is not None:
+    if numeric and not matched and actual is not None:
         # Numeric fields (total) may differ only in trailing-zero formatting
-        # ("250" vs "250.00") without disagreeing in value.
+        # ("250" vs "250.00") without disagreeing in value. Scoped to numeric fields
+        # only — an identifier like invoice_number must match exactly, since
+        # Decimal("1004") == Decimal("1004.0") would otherwise mask a real
+        # extraction discrepancy (e.g. a dropped leading zero).
         try:
             matched = Decimal(actual) == Decimal(expected)
         except InvalidOperation:

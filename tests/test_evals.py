@@ -8,6 +8,8 @@ scoring mechanism, not model accuracy (cassette-backed model scoring is ticket 1
 
 from __future__ import annotations
 
+import pytest
+
 from invoice_automation import evals
 from invoice_automation.deps import Deps
 from invoice_automation.evals import GOLDEN_CASES, run_eval
@@ -33,10 +35,11 @@ def test_report_agrees_perfectly_on_the_deterministic_golden_set(deps: Deps) -> 
 
     assert report.decision_agreement_pct == 100.0
     assert report.field_accuracy_pct == 100.0
-    # invoice_1004_revised.json is expected to raise (a revision after payment), not
-    # reach a decision — every other scored case reaches one cleanly.
+    # invoice_1004_revised.json (a revision after payment) and invoice_9004_image_only.pdf
+    # (no text layer) are expected to raise rather than reach a decision — every other
+    # scored case reaches one cleanly.
     erroring = {c.document_name for c in report.scored if c.error is not None}
-    assert erroring == {"invoice_1004_revised.json"}
+    assert erroring == {"invoice_1004_revised.json", "invoice_9004_image_only.pdf"}
 
 
 def test_summary_reports_coverage_and_both_percentages(deps: Deps) -> None:
@@ -49,7 +52,7 @@ def test_summary_reports_coverage_and_both_percentages(deps: Deps) -> None:
 
 
 def test_a_wrong_expectation_surfaces_as_a_disagreement_not_a_silent_pass(
-    deps: Deps, monkeypatch
+    deps: Deps, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The scoring mechanism must be able to fail, or it isn't measuring anything.
     Point one case at a decision the pipeline will never actually reach and confirm
