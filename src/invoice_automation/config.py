@@ -71,6 +71,10 @@ RISK_WEIGHTS: dict[str, int] = {
     # to the threshold itself so it always crosses it, referencing the constant rather
     # than a hardcoded number that could silently drift out of sync with it.
     "duplicate_contradiction": RISK_ESCALATION_THRESHOLD,
+    # Two documents in one batch both claim to be the current version of the same
+    # invoice, one of them a revision (contested.py). Same reasoning as the line above,
+    # and the same guarantee: file order must never be what decides which one pays.
+    "contested_submission": RISK_ESCALATION_THRESHOLD,
 }
 
 # The approval agent's investigation is bounded: this many tool calls before it must

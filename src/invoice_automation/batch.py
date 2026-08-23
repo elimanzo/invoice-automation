@@ -15,6 +15,7 @@ from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+from .contested import contested_documents
 from .deps import Deps
 from .documents import UnsupportedDocument, load_document
 from .graph import RunResult, run_invoice
@@ -64,6 +65,11 @@ def run_batch(
 ) -> BatchSummary:
     """Process every document in `directory`, sequentially.
 
+    Two documents that both claim to be the current version of one invoice are held for
+    a human before either is processed (`contested_documents`) — otherwise the first one
+    the sort order reaches would auto-pay, and the second would arrive to announce that
+    the amount just paid was the wrong one.
+
     A file this system doesn't read at all (`UnsupportedDocument` — wrong extension,
     unrecognisable content) is skipped without becoming a batch item; anything else that
     goes wrong for one document — a bad response, a validation error, whatever — is
@@ -74,7 +80,14 @@ def run_batch(
     """
     items: list[BatchItem] = []
 
-    for path in sorted(p for p in directory.iterdir() if p.is_file()):
+    paths = sorted(p for p in directory.iterdir() if p.is_file())
+    # Before anything runs: which documents in this batch contest each other's invoice
+    # (contested.py). Computed over the whole directory first, because the answer for the
+    # first document depends on the last one — that is exactly what processing them one
+    # at a time cannot know, and what let a superseded invoice pay itself.
+    contested = contested_documents(paths)
+
+    for path in paths:
         try:
             document = load_document(path)
         except UnsupportedDocument:
@@ -84,7 +97,12 @@ def run_batch(
             continue
 
         try:
-            result = run_invoice(document, deps, checkpointer=checkpointer)
+            result = run_invoice(
+                document,
+                deps,
+                checkpointer=checkpointer,
+                contested_reason=contested.get(path.name),
+            )
         except Exception as exc:  # noqa: BLE001 — see the module and function docstrings
             items.append(BatchItem(document_name=path.name, result=None, error=str(exc)))
             continue

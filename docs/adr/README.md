@@ -17,6 +17,7 @@ made, and what it costs. Superseded decisions get marked, not deleted.
 | [0010](0010-redundant-critics-considered-deferred.md) | Redundant independent critics for escalation (considered, deferred) |
 | [0011](0011-uploaded-originals-retained-permanently.md) | Uploaded invoice originals are retained permanently |
 | [0012](0012-reviewer-edits-via-checkpoint-update.md) | Reviewer edits reach the invoice via checkpoint update, not graph rewind |
+| [0013](0013-contested-submissions-detected-before-the-batch-runs.md) | Contested submissions are detected before the batch runs |
 
 Domain vocabulary lives in [CONTEXT.md](../../CONTEXT.md). The original brief is
 [REQUIREMENTS.md](../../REQUIREMENTS.md).

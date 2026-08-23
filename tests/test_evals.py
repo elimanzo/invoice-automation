@@ -35,11 +35,12 @@ def test_report_agrees_perfectly_on_the_deterministic_golden_set(deps: Deps) -> 
 
     assert report.decision_agreement_pct == 100.0
     assert report.field_accuracy_pct == 100.0
-    # invoice_1004_revised.json (a revision after payment) and invoice_9004_image_only.pdf
-    # (no text layer) are expected to raise rather than reach a decision — every other
-    # scored case reaches one cleanly.
+    # Only invoice_9004_image_only.pdf (no text layer) is expected to raise rather than
+    # reach a decision. invoice_1004_revised.json used to raise here too — a revision
+    # arriving after the version it supersedes had already paid — until the batch's
+    # pre-scan started holding both versions instead (contested.py). Both now escalate.
     erroring = {c.document_name for c in report.scored if c.error is not None}
-    assert erroring == {"invoice_1004_revised.json", "invoice_9004_image_only.pdf"}
+    assert erroring == {"invoice_9004_image_only.pdf"}
 
 
 def test_summary_reports_coverage_and_both_percentages(deps: Deps) -> None:

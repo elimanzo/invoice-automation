@@ -34,6 +34,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from .approval import decide, run_approval_agent
+from .contested import contested_flag
 from .deps import Deps
 from .documents import Document
 from .extraction import extract_invoice
@@ -86,6 +87,13 @@ class PipelineState(TypedDict, total=False):
     human_review: dict[str, Any] | None
     """The reviewer's outcome and reason for an escalated invoice (ticket 11), recorded
     as its own audit-trail entry distinct from `decision`."""
+    contested_reason: str | None
+    """Why this document was held before the run began (contested.py) — another document
+    in the same batch claims to be the current version of the same invoice. Carried in
+    state rather than seeded into `flags`, because `_ingest`'s model path *replaces* that
+    key and would drop a pre-seeded flag; `_reconcile` appends it instead, which is also
+    where it belongs — a contested submission is a reconciliation finding that happens to
+    be knowable earlier than reconciliation runs."""
 
 
 @dataclass(frozen=True)
@@ -142,9 +150,14 @@ def _reconcile(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
 
     result = reconcile(invoice, state["document_name"], deps)
 
+    reconciliation_flags = list(result.flags)
+    contested_reason = state.get("contested_reason")
+    if contested_reason:
+        reconciliation_flags.append(contested_flag(contested_reason))
+
     return {
         "invoice": result.invoice.model_dump(mode="json"),
-        "flags": [f.model_dump(mode="json") for f in existing_flags + result.flags],
+        "flags": [f.model_dump(mode="json") for f in existing_flags + reconciliation_flags],
         "corrections": [
             c.model_dump(mode="json") for c in existing_corrections + result.corrections
         ],
@@ -377,6 +390,7 @@ def run_invoice(
     deps: Deps,
     *,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
+    contested_reason: str | None = None,
 ) -> RunResult:
     """The primary seam. A document goes in; the whole outcome comes out.
 
@@ -396,6 +410,7 @@ def run_invoice(
             "raw_text": document.raw_text,
             "flags": [],
             "corrections": [],
+            "contested_reason": contested_reason,
         }
         final = graph.invoke(initial, config=config)
 

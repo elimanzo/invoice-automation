@@ -97,6 +97,20 @@ A document declaring itself a replacement for an earlier one, via an explicit `r
 field. It supersedes the original. `invoice_1004_revised.json` raises INV-1004 from $1,890
 to $5,940; processing both naively pays $7,830 against a $5,940 obligation.
 
+Superseding is not the same as arriving second. When both documents are in one batch, the
+pair is **contested** and neither pays until a human says which is current — filename order
+is not a business rule. See ADR-0013.
+
+### Contested submission
+Two or more **documents** in one batch claiming the same invoice, at least one of them a
+**revision**. Every document in the group is held for a **reviewer**; none pays
+automatically. Detected before the batch's first run, from identities readable without the
+model.
+
+A plain duplicate is *not* contested — **reconciliation** resolves those whichever arrives
+first. Contested means the *amount owed itself* is in dispute, not just which copy is
+richer.
+
 ### Critic
 The agent that attacks another agent's output. Used in two loops: after **ingestion** (does
 the extraction match the raw text? do line items sum to the subtotal?) and inside

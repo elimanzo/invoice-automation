@@ -71,21 +71,28 @@ class GoldenCase:
 GOLDEN_CASES: tuple[GoldenCase, ...] = (
     GoldenCase(
         document_name="invoice_1004.json",
-        expected_decision="approved",
+        expected_decision="escalated",
         expected_fields=FieldExpectation(
             invoice_number="INV-1004", vendor_name="Precision Parts Ltd.",
             total="1890.00", currency="USD",
         ),
-        note="REQUIREMENTS.md: normal order within stock",
+        note=(
+            "REQUIREMENTS.md calls this a normal order within stock, and on its own it "
+            "is one — but invoice_1004_revised.json is in the same batch claiming to be "
+            "the current version of INV-1004, so neither pays without a human "
+            "(contested.py). Clean-and-under-threshold is not enough when the amount "
+            "itself is contested."
+        ),
     ),
     GoldenCase(
         document_name="invoice_1004_revised.json",
-        expected_decision=None,
-        expected_error="revised",
+        expected_decision="escalated",
         note=(
-            "invoice_1004.json pays instantly (clean, under threshold), so by the "
-            "time the revision arrives the obligation is already settled — a human "
-            "must decide, not this code (reconciliation.RevisionAfterPayment)"
+            "The revision, held for the same reason as the version it supersedes. This "
+            "case used to expect an error: invoice_1004.json paid $1,890 instantly, and "
+            "the revision then arrived to report the real obligation was $5,940 "
+            "(reconciliation.RevisionAfterPayment). The pre-scan makes that unreachable "
+            "in a batch — sort order no longer decides which total Acme pays."
         ),
     ),
     GoldenCase(
