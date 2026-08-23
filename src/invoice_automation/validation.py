@@ -25,6 +25,29 @@ from .models import Correction, Flag, FlagSeverity, Invoice, LineItem
 
 _ROUNDING_TOLERANCE = Decimal("0.01")
 
+# Every flag code / correction field `validate_invoice` can produce, so a caller that
+# recomputes validation against an edited invoice (ticket 19) knows exactly which prior
+# flags/corrections were this stage's own output and safe to replace, without touching
+# whatever an earlier stage (extraction, reconciliation) already recorded.
+VALIDATION_FLAG_CODES = frozenset(
+    {
+        "total_mismatch",
+        "empty_vendor",
+        "unknown_vendor",
+        "negative_quantity",
+        "unknown_item",
+        "zero_stock_item",
+        "stock_exceeded",
+        "price_above_expected",
+        "price_above_expected_documented",
+        "due_date_before_invoice_date",
+        "due_date_in_the_past",
+        "po_reference_uncheckable",
+        "non_usd_currency",
+    }
+)
+VALIDATION_CORRECTION_FIELDS = frozenset({"usd_total"})
+
 
 @dataclass(frozen=True)
 class ValidationResult:

@@ -141,6 +141,7 @@ export function RunDrilldown() {
                 <th>Stored</th>
                 <th>Reason</th>
                 <th>Confidence</th>
+                <th>Source</th>
               </tr>
             </thead>
             <tbody>
@@ -151,6 +152,11 @@ export function RunDrilldown() {
                   <td>{correction.value}</td>
                   <td>{correction.reason}</td>
                   <td>{(correction.confidence * 100).toFixed(0)}%</td>
+                  <td>
+                    <span className={`correction-source correction-source--${correction.source}`}>
+                      {correction.source === "human" ? "Human" : "Model"}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>

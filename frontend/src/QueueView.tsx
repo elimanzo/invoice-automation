@@ -1,5 +1,17 @@
 import { useEffect, useState } from "react";
-import { RunDetail, RunSummary, getRun, listReviews, sourceUrl, submitReview } from "./api";
+import {
+  HeaderEdit,
+  HeaderEditField,
+  LineItem,
+  LineItemEdit,
+  LineItemEditField,
+  RunDetail,
+  RunSummary,
+  getRun,
+  listReviews,
+  sourceUrl,
+  submitReview,
+} from "./api";
 import { severityClassName, severityTooltip } from "./severity";
 import { usePolled } from "./usePolled";
 
@@ -17,6 +29,43 @@ function reviewDetails(summaries: RunSummary[]): Promise<RunDetail[]> {
   return Promise.all(summaries.map((s) => getRun(s.document_name)));
 }
 
+// Ticket 19: the header fields a VP may edit from the queue, scoped deliberately. A
+// wrong vendor, invoice number, or computed total usually means the wrong document was
+// matched — a reject-and-resubmit problem, not something a field edit fixes (ADR-0012).
+const HEADER_FIELDS: { field: HeaderEditField; label: string; type: "date" | "text" }[] = [
+  { field: "due_date", label: "Due date", type: "date" },
+  { field: "invoice_date", label: "Invoice date", type: "date" },
+  { field: "payment_terms", label: "Payment terms", type: "text" },
+  { field: "purchase_order_reference", label: "PO reference", type: "text" },
+  { field: "notes", label: "Notes", type: "text" },
+];
+
+const LINE_ITEM_FIELDS: LineItemEditField[] = ["quantity", "unit_price", "stated_amount", "note"];
+
+function asInputValue(v: string | number | null): string {
+  return v === null || v === undefined ? "" : String(v);
+}
+
+function headerValuesFromInvoice(invoice: RunDetail["invoice"]): Record<HeaderEditField, string> {
+  const values = {} as Record<HeaderEditField, string>;
+  for (const { field } of HEADER_FIELDS) {
+    values[field] = invoice ? asInputValue(invoice[field]) : "";
+  }
+  return values;
+}
+
+function lineItemValuesFromInvoice(
+  lineItems: LineItem[],
+): Record<LineItemEditField, string>[] {
+  return lineItems.map((item) => {
+    const values = {} as Record<LineItemEditField, string>;
+    for (const field of LINE_ITEM_FIELDS) {
+      values[field] = asInputValue(item[field]);
+    }
+    return values;
+  });
+}
+
 function ReviewCard({
   detail,
   onDecided,
@@ -31,6 +80,41 @@ function ReviewCard({
 
   const invoice = detail.invoice;
 
+  // Staged edits live only in this card's state until submit — one combined request
+  // carries them alongside the outcome, never a separate round-trip per field
+  // (ADR-0012). Initialized once from the invoice this card was opened with.
+  const [headerValues, setHeaderValues] = useState(() => headerValuesFromInvoice(invoice));
+  const [lineItemValues, setLineItemValues] = useState(() =>
+    lineItemValuesFromInvoice(invoice?.line_items ?? []),
+  );
+
+  function headerEdits(): HeaderEdit[] {
+    if (!invoice) return [];
+    const original = headerValuesFromInvoice(invoice);
+    return HEADER_FIELDS.filter(({ field }) => headerValues[field] !== original[field]).map(
+      ({ field }) => ({ field, value: headerValues[field] === "" ? null : headerValues[field] }),
+    );
+  }
+
+  function lineItemEdits(): LineItemEdit[] {
+    if (!invoice) return [];
+    const original = lineItemValuesFromInvoice(invoice.line_items);
+    const edits: LineItemEdit[] = [];
+    invoice.line_items.forEach((_, i) => {
+      for (const field of LINE_ITEM_FIELDS) {
+        const current = lineItemValues[i]?.[field] ?? "";
+        if (current !== original[i][field]) {
+          edits.push({ index: i, field, value: current === "" ? null : current });
+        }
+      }
+    });
+    return edits;
+  }
+
+  function setLineItemField(index: number, field: LineItemEditField, value: string) {
+    setLineItemValues((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
+  }
+
   async function submit(outcome: "approved" | "rejected") {
     if (reason.trim() === "") {
       setError("A reason is required.");
@@ -39,7 +123,10 @@ function ReviewCard({
     setSubmitting(true);
     setError(null);
     try {
-      await submitReview(detail.document_name, outcome, reason.trim());
+      await submitReview(detail.document_name, outcome, reason.trim(), {
+        headerEdits: headerEdits(),
+        lineItemEdits: lineItemEdits(),
+      });
       onDecided(detail.document_name);
     } catch {
       setError("Could not submit the decision. Try again.");
@@ -64,6 +151,26 @@ function ReviewCard({
           <strong>{invoice.vendor.name}</strong> — {invoice.total ?? "—"} {invoice.currency}
           {invoice.invoice_number ? ` — ${invoice.invoice_number}` : ""}
         </p>
+      )}
+
+      {invoice && (
+        <div className="review-card__header-edits">
+          <h3>Invoice details</h3>
+          <div className="header-edit-grid">
+            {HEADER_FIELDS.map(({ field, label, type }) => (
+              <label key={field} className="header-edit-field">
+                {label}
+                <input
+                  type={type}
+                  value={headerValues[field]}
+                  onChange={(e) =>
+                    setHeaderValues((prev) => ({ ...prev, [field]: e.target.value }))
+                  }
+                />
+              </label>
+            ))}
+          </div>
+        </div>
       )}
 
       {detail.decision && (
@@ -99,6 +206,7 @@ function ReviewCard({
                 <th>Raw</th>
                 <th>Stored</th>
                 <th>Reason</th>
+                <th>Source</th>
               </tr>
             </thead>
             <tbody>
@@ -108,6 +216,11 @@ function ReviewCard({
                   <td>{correction.raw}</td>
                   <td>{correction.value}</td>
                   <td>{correction.reason}</td>
+                  <td>
+                    <span className={`correction-source correction-source--${correction.source}`}>
+                      {correction.source === "human" ? "Human" : "Model"}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -124,6 +237,8 @@ function ReviewCard({
                 <th>Item</th>
                 <th>Qty</th>
                 <th>Unit price</th>
+                <th>Stated amount</th>
+                <th>Note</th>
                 <th>Amount</th>
               </tr>
             </thead>
@@ -131,8 +246,36 @@ function ReviewCard({
               {invoice.line_items.map((item, i) => (
                 <tr key={i}>
                   <td>{item.item}</td>
-                  <td>{item.quantity}</td>
-                  <td>{item.unit_price ?? "—"}</td>
+                  <td>
+                    <input
+                      type="number"
+                      value={lineItemValues[i]?.quantity ?? ""}
+                      onChange={(e) => setLineItemField(i, "quantity", e.target.value)}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={lineItemValues[i]?.unit_price ?? ""}
+                      onChange={(e) => setLineItemField(i, "unit_price", e.target.value)}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={lineItemValues[i]?.stated_amount ?? ""}
+                      onChange={(e) => setLineItemField(i, "stated_amount", e.target.value)}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      value={lineItemValues[i]?.note ?? ""}
+                      onChange={(e) => setLineItemField(i, "note", e.target.value)}
+                    />
+                  </td>
                   <td>{item.amount ?? "—"}</td>
                 </tr>
               ))}
