@@ -97,3 +97,35 @@ def test_no_arguments_shows_help_rather_than_failing_obscurely(
 
     assert exit_code == 2
     assert "--invoice_path" in capsys.readouterr().out
+
+
+def test_invoice_path_and_invoice_dir_together_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = main(
+        [f"--invoice_path={tmp_path / 'x.txt'}", f"--invoice_dir={tmp_path}"]
+    )
+
+    assert exit_code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_invoice_dir_processes_the_directory_and_reports_a_summary(
+    invoices_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = main([f"--invoice_dir={invoices_dir}"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "invoice_1001.txt" in output
+    assert "Processed: " in output
+    assert "approved:" in output
+
+
+def test_a_nonexistent_invoice_dir_is_a_clean_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = main([f"--invoice_dir={tmp_path / 'does-not-exist'}"])
+
+    assert exit_code == 1
+    assert "no such directory" in capsys.readouterr().err

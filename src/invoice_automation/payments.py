@@ -15,7 +15,10 @@ from typing import Literal, Protocol, runtime_checkable
 
 @dataclass(frozen=True)
 class PaymentResult:
-    status: Literal["success", "declined", "error"]
+    status: Literal["success", "declined", "error", "skipped"]
+    """"skipped" means the registry already holds a payment for this invoice's
+    identity — the mock payment function is never called a second time (ticket 09)."""
+
     reference: str | None = None
     detail: str | None = None
 

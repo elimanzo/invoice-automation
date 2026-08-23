@@ -14,6 +14,7 @@ from pathlib import Path
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from .batch import BatchSummary, run_batch
 from .catalogue import seed_catalogue
 from .config import MissingApiKey, Settings
 from .deps import build_deps
@@ -24,10 +25,10 @@ from .documents import (
     load_document,
 )
 from .extraction import ExtractionFailed
-from .providers import ProviderUnavailable
 from .graph import RunResult, run_invoice
 from .models import Decision, Flag, Invoice
 from .payments import PaymentResult
+from .providers import ProviderUnavailable
 
 CHECKPOINT_FILENAME = "checkpoints.db"
 
@@ -41,6 +42,14 @@ def main(argv: list[str] | None = None) -> int:
         "--invoice_path",
         type=Path,
         help="Path to a single invoice document to process.",
+    )
+    parser.add_argument(
+        "--invoice_dir",
+        type=Path,
+        help=(
+            "Path to a directory of invoice documents to process, one after another. "
+            "One bad document does not stop the rest; a summary is reported at the end."
+        ),
     )
     parser.add_argument(
         "--seed-catalogue",
@@ -60,10 +69,18 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = Settings.from_env()
 
-    if args.seed_catalogue and args.invoice_path is not None:
+    if args.invoice_path is not None and args.invoice_dir is not None:
+        print(
+            "error: --invoice_path and --invoice_dir are mutually exclusive. "
+            "Pass one or the other.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.seed_catalogue and (args.invoice_path is not None or args.invoice_dir is not None):
         print(
             "error: --seed-catalogue resets the catalogue and processes nothing. "
-            "Run it on its own, then process the invoice.",
+            "Run it on its own, then process invoices.",
             file=sys.stderr,
         )
         return 2
@@ -74,9 +91,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Catalogue reset to seed contents: {path}")
         return 0
 
-    if args.invoice_path is None:
+    if args.invoice_path is None and args.invoice_dir is None:
         parser.print_help()
         return 2
+
+    if args.invoice_dir is not None:
+        if not args.invoice_dir.is_dir():
+            print(f"error: no such directory: {args.invoice_dir}", file=sys.stderr)
+            return 1
+
+        try:
+            deps = build_deps(settings, provider=args.provider)
+        except MissingApiKey as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        checkpoint_path = Path(settings.data_dir) / CHECKPOINT_FILENAME
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(checkpoint_path, check_same_thread=False)) as conn:
+            summary = run_batch(args.invoice_dir, deps, checkpointer=SqliteSaver(conn))
+
+        print(render_batch(summary))
+        return 0
+
+    assert args.invoice_path is not None  # the two branches above are exhaustive
 
     try:
         document = load_document(args.invoice_path)
@@ -107,6 +145,16 @@ def main(argv: list[str] | None = None) -> int:
 
     print(render(result, document_name=document.name))
     return 0
+
+
+def render_batch(summary: BatchSummary) -> str:
+    """One line per document, then the counts a clerk actually wants to see."""
+    lines = [f"{item.document_name:<30} {item.outcome}" for item in summary.items]
+    lines.append("")
+    lines.append(f"Processed: {len(summary.items)}")
+    for outcome, count in sorted(summary.counts.items()):
+        lines.append(f"  {outcome}: {count}")
+    return "\n".join(lines)
 
 
 def render(result: RunResult, *, document_name: str) -> str:

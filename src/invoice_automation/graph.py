@@ -38,6 +38,7 @@ from .documents import Document
 from .extraction import extract_invoice
 from .models import Correction, Decision, DocumentFormat, Flag, Invoice, ToolCallRecord
 from .payments import PaymentResult
+from .registry import DuplicatePayment, normalize_invoice_identity
 from .structured_parsing import StructuredParseFailed, parse_structured
 from .validation import validate_invoice
 
@@ -164,8 +165,37 @@ def _pay(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     total = invoice.total if invoice.total is not None else invoice.line_items_total
     assert total is not None  # approval could not have approved without one
 
+    identity = normalize_invoice_identity(invoice.invoice_number)
+    if identity is not None and deps.registry.payment_recorded(identity):
+        # Idempotency: a prior run already paid this identity. Reprocessing the same
+        # document (or a batch run over the same directory a second time) must not pay
+        # it again — the mock payment function is never called here.
+        return {
+            "payment": {
+                "status": "skipped",
+                "reference": None,
+                "detail": f"already paid under identity {identity!r}",
+            }
+        }
+
     result = deps.payment.pay(invoice.vendor.name, total, invoice.currency)
-    return {"payment": {"status": result.status, "reference": result.reference}}
+    if identity is not None:
+        try:
+            deps.registry.record_payment(identity, invoice.vendor.name, total)
+        except DuplicatePayment:
+            # The check above and this write are not atomic, but nothing in this
+            # sequential, single-threaded pipeline can run between them (ADR-0002 —
+            # concurrency is a documented gap, not solved here). This branch is a
+            # backstop the storage-layer UNIQUE constraint provides for free, not a
+            # race this code is actually exposed to.
+            pass
+    return {
+        "payment": {
+            "status": result.status,
+            "reference": result.reference,
+            "detail": result.detail,
+        }
+    }
 
 
 def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> Any:
