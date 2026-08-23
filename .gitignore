@@ -1,0 +1,21 @@
+# Local working notes / issue tracker (see docs/agents/issue-tracker.md)
+.scratch/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Runtime artifacts
+inventory.db
+*.sqlite
+*.sqlite3
+checkpoints.db
+.env
+
+# Node (the built bundle IS committed - see ADR-0008)
+node_modules/

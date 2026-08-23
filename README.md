@@ -19,6 +19,7 @@ takes **5 days** per invoice. Those three numbers are what this system is measur
 | Path | What it is |
 | ---- | ---------- |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | The original brief, unmodified |
+| [docs/SPEC.md](docs/SPEC.md) | The spec — problem, 91 user stories, scope boundaries |
 | [CONTEXT.md](CONTEXT.md) | Domain glossary — the vocabulary this codebase speaks |
 | [docs/adr/](docs/adr/) | Architecture decisions, each with its cost stated |
 | [data/invoices/](data/invoices/) | The 16 provided sample invoices, untouched |
