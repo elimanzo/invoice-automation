@@ -127,6 +127,12 @@ class GrokProvider:
                     }
                 ],
                 tool_choice={"type": "function", "function": {"name": TOOL_NAME}},
+                # Extraction is reading comprehension, not creative writing: the same
+                # document should produce the same answer every time. Found live —
+                # invoice_1002.txt's "Dt:" (an abbreviated label) was read correctly on
+                # one call and dropped on another, identical, call. Default sampling
+                # temperature was the reason; there was never one before this fix.
+                temperature=0,
             )
         except OpenAIError as exc:
             raise ProviderUnavailable(

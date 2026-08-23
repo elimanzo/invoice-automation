@@ -67,7 +67,9 @@ it was extracted from.
 Report a problem only if something is actually wrong:
 - A value in the extraction that contradicts the document, or names something (a
   vendor, an item, a figure) that appears nowhere in it.
-- The vendor, or a line item the document clearly states, missing from the extraction.
+- Any field — the vendor, a line item, a date, an amount — left null even though the
+  document plainly states it under a label, however abbreviated ("Dt:", "Due Dt:",
+  "Amt:" and similar are still the field they abbreviate).
 
 Do NOT report a problem for:
 - A null field, whenever the document simply doesn't state that value.
