@@ -32,11 +32,11 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
-from .approval import decide
+from .approval import decide, run_approval_agent
 from .deps import Deps
 from .documents import Document
 from .extraction import extract_invoice
-from .models import Correction, Decision, DocumentFormat, Flag, Invoice
+from .models import Correction, Decision, DocumentFormat, Flag, Invoice, ToolCallRecord
 from .payments import PaymentResult
 from .structured_parsing import StructuredParseFailed, parse_structured
 from .validation import validate_invoice
@@ -66,6 +66,9 @@ class PipelineState(TypedDict, total=False):
     """The invoice total converted to USD (validation.py), for approval's dollar
     threshold. A string, like every other JSON-shaped state field — approval parses it
     back to Decimal at its own boundary, same as invoice and flags."""
+    tool_calls: list[dict[str, Any]]
+    """Every read-only tool call the approval agent made, in order, with its arguments
+    and result — the investigation trace ticket 08 asks for."""
 
 
 @dataclass(frozen=True)
@@ -78,6 +81,7 @@ class RunResult:
     payment: PaymentResult | None
     corrections: list[Correction]
     extraction_method: str
+    tool_calls: list[ToolCallRecord]
 
 
 def _ingest(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
@@ -125,13 +129,24 @@ def _validate(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     }
 
 
-def _approve(state: PipelineState) -> dict[str, Any]:
+def _approve(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     invoice = Invoice.model_validate(state["invoice"])
     flags = [Flag.model_validate(f) for f in state.get("flags", [])]
     usd_total_str = state.get("usd_total")
     usd_total = Decimal(usd_total_str) if usd_total_str is not None else None
-    decision = decide(invoice, flags, usd_total=usd_total)
-    return {"decision": decision.model_dump(mode="json")}
+
+    rule_decision = decide(invoice, flags, usd_total=usd_total)
+
+    if rule_decision.outcome == "rejected":
+        # The ratchet forbids downgrading a rejection, so the agent call cannot change
+        # anything here — it is not made at all, not made and then ignored.
+        return {"decision": rule_decision.model_dump(mode="json"), "tool_calls": []}
+
+    decision, tool_calls = run_approval_agent(invoice, flags, usd_total, rule_decision, deps)
+    return {
+        "decision": decision.model_dump(mode="json"),
+        "tool_calls": [tc.model_dump(mode="json") for tc in tool_calls],
+    }
 
 
 def _pay(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
@@ -159,7 +174,7 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> Any:
     builder = StateGraph(PipelineState)
     builder.add_node("ingest", lambda state: _ingest(state, deps=deps))
     builder.add_node("validate", lambda state: _validate(state, deps=deps))
-    builder.add_node("approve", _approve)
+    builder.add_node("approve", lambda state: _approve(state, deps=deps))
     builder.add_node("pay", lambda state: _pay(state, deps=deps))
 
     builder.add_edge(START, "ingest")
@@ -225,4 +240,5 @@ def run_invoice(
         payment=PaymentResult(**final["payment"]) if final.get("payment") else None,
         corrections=[Correction.model_validate(c) for c in final.get("corrections", [])],
         extraction_method=final.get("extraction_method", "model"),
+        tool_calls=[ToolCallRecord.model_validate(tc) for tc in final.get("tool_calls", [])],
     )

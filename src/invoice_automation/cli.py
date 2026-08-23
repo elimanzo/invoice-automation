@@ -127,6 +127,13 @@ def render(result: RunResult, *, document_name: str) -> str:
     ] or ["  (none)"]
     lines.append("")
 
+    lines.append("Approval agent investigation:")
+    lines += [
+        f"  {tc.name}({', '.join(f'{k}={v!r}' for k, v in tc.arguments.items())}) -> {tc.result}"
+        for tc in result.tool_calls
+    ] or ["  (none)"]
+    lines.append("")
+
     lines += _decision_lines(result.decision)
     lines += _payment_lines(result.payment)
     return "\n".join(lines)

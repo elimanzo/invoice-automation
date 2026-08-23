@@ -17,6 +17,7 @@ from invoice_automation.documents import load_document
 from invoice_automation.extraction import extract_invoice
 from invoice_automation.payments import PaymentResult
 from invoice_automation.providers import FakeProvider
+from invoice_automation.registry import PaymentRecord
 
 
 class InMemoryCatalogue:
@@ -49,6 +50,9 @@ class NullRegistry:
 
     def record_payment(self, invoice_number: str, vendor: str, amount: Decimal) -> None:
         pass
+
+    def payments(self) -> list[PaymentRecord]:
+        return []
 
 
 class FrozenClock:

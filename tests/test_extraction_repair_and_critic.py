@@ -85,6 +85,21 @@ class TestUnresolvableDueDateFlag:
 
         assert any(flag.code == "due_date_unresolvable" for flag in result.flags)
 
+    def test_the_critic_prompt_does_not_ask_for_an_unresolvable_due_date_to_be_filled_in(
+        self,
+    ) -> None:
+        """Found live: broadening the critic to catch any clearly-stated-but-dropped
+        field (the ticket 03 temperature fix) made it also flag a *correctly* null
+        due_date for invoice_1003's 'Due Date: yesterday' as a problem, triggering a
+        retry loop that exhausted both attempts and failed extraction entirely on the
+        fraud/injection test case. This is a guardrail-text regression test: we cannot
+        unit-test a real model's compliance offline, but we can make sure the exception
+        clause that fixes it isn't silently removed later."""
+        from invoice_automation.extraction import CRITIC_SYSTEM_PROMPT
+
+        assert "yesterday" in CRITIC_SYSTEM_PROMPT
+        assert "due_date" in CRITIC_SYSTEM_PROMPT
+
 
 class TestCriticRetriesOnAProblem:
     def test_a_critique_finding_a_problem_triggers_re_extraction(

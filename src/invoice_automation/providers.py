@@ -16,7 +16,7 @@ import copy
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from openai import OpenAI, OpenAIError
 
@@ -173,6 +173,41 @@ class GrokProvider:
             ) from exc
         return result
 
+    def converse(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> AssistantTurn:
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                # These are plain OpenAI-shaped dicts built by the caller (approval's
+                # tool loop); the SDK's stricter param types are for its own literal
+                # call-sites, not for a caller assembling messages/tools dynamically.
+                messages=cast(Any, messages),
+                tools=cast(Any, tools),
+                temperature=0,
+            )
+        except OpenAIError as exc:
+            raise ProviderUnavailable(f"Grok request failed: {exc}") from exc
+
+        if not response.choices:
+            raise ProviderUnavailable("Grok returned no choices")
+
+        message = response.choices[0].message
+        parsed_calls: list[ToolCall] = []
+        for tool_call in message.tool_calls or []:
+            function = getattr(tool_call, "function", None)
+            if function is None:
+                continue  # A non-function tool call; nothing here can execute it.
+            try:
+                arguments = json.loads(function.arguments)
+            except json.JSONDecodeError:
+                arguments = {}  # Let the caller's tool dispatch report the bad shape.
+            parsed_calls.append(
+                ToolCall(id=tool_call.id, name=function.name, arguments=arguments)
+            )
+
+        return AssistantTurn(content=message.content, tool_calls=parsed_calls)
+
 
 @dataclass
 class FakeProvider:
@@ -189,6 +224,7 @@ class FakeProvider:
 
     responses: dict[str, dict[str, Any]] = field(default_factory=dict)
     calls: list[StructuredCall] = field(default_factory=list)
+    conversations: list[list[dict[str, Any]]] = field(default_factory=list)
 
     @classmethod
     def with_sample_responses(cls, directory: Path | None = None) -> FakeProvider:
@@ -230,6 +266,70 @@ class FakeProvider:
         # A copy, so a caller mutating the result cannot corrupt the store for later calls.
         return copy.deepcopy(self.responses[key])
 
+    def converse(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> AssistantTurn:
+        """No scripted tool-calling behaviour by default: immediately concludes with
+        no investigation and no added caution, exactly like the critique default in
+        `structured()` — every test written before the approval agent existed keeps
+        its expected outcome without needing a scripted conversation of its own."""
+        self.conversations.append(messages)
+        return AssistantTurn(
+            content='{"outcome": null, "reasoning": "no further concerns"}',
+            tool_calls=[],
+        )
+
 
 class MissingRecording(LookupError):
     """No recorded response exists for this document."""
+
+
+# ---------------------------------------------------------------------------
+# Multi-turn tool use (ticket 08). Distinct from `structured()`, which forces exactly
+# one call to exactly one tool and treats its arguments as the answer. `converse()` lets
+# the model choose freely among several tools across several turns — the shape a real
+# investigation needs (call vendor_history, read the result, decide whether to look
+# further) that a single forced call cannot express.
+#
+# Kept as a second method on the same interface rather than bolted onto `structured()`,
+# and deliberately NOT required of every `Provider` — a caller checks
+# `isinstance(provider, ToolCallingProvider)` and falls back to a no-tools path when it
+# isn't one. That is what lets every scripted test double written for tickets 03-07,
+# which only ever implemented `structured()`, keep working unmodified: they simply
+# aren't tool-calling-capable, and approval treats that as "skip the agent, keep the
+# rule-based decision" rather than an error.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One tool invocation the model asked for."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class AssistantTurn:
+    """One reply from the model: either it calls one or more tools, or it's done and
+    `content` holds its final answer. A well-behaved conversation ends with no tool
+    calls; a badly-behaved one is bounded by the caller's own loop counter, not by
+    anything the provider enforces."""
+
+    content: str | None
+    tool_calls: list[ToolCall]
+
+
+@runtime_checkable
+class ToolCallingProvider(Protocol):
+    def converse(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> AssistantTurn:
+        """Advance a tool-using conversation by one turn.
+
+        `messages` is the full conversation so far, OpenAI-shaped (system, user,
+        assistant, and tool-result entries) — the caller owns and appends to this list;
+        the provider only ever sees what it's given, same as `structured()`.
+        """
+        ...

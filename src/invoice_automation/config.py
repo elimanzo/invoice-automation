@@ -66,6 +66,12 @@ RISK_WEIGHTS: dict[str, int] = {
 # threshold) escalate on judgement rather than sail through on a technicality.
 RISK_ESCALATION_THRESHOLD = 5
 
+# The approval agent's investigation is bounded: this many tool calls before it must
+# conclude. Exhausting the bound without a conclusion fails closed — the deterministic
+# rule-based decision stands unchanged, never guessed at from an inconclusive
+# investigation.
+APPROVAL_MAX_TOOL_CALLS = 4
+
 
 def _env(name: str, default: str) -> str:
     """Read an environment variable, treating empty as unset.

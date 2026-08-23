@@ -19,6 +19,7 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from decimal import Decimal
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -177,3 +178,48 @@ def _to_item(row: sqlite3.Row) -> CatalogueItem:
         stock=row["stock"],
         expected_unit_price=Decimal(price) if price is not None else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Item matching (ADR-0007): normalise, then match exactly. The single source of truth
+# for what an item name resolves to — both validation.py and the approval agent's
+# read-only tools (tools.py) call these rather than each rolling their own matching, so
+# they can never disagree about what's in the catalogue.
+#
+# Found live: before this existed, tools.py called `catalogue.get_item()` directly (an
+# exact match), while validation.py normalised first. The approval agent asked about
+# "Widget A" (as written in a real corrupted invoice) and was told it doesn't exist,
+# while validation correctly matched it to WidgetA — the agent then escalated an invoice
+# on a factually wrong premise its own tool had handed it.
+# ---------------------------------------------------------------------------
+
+
+def normalize_item_name(name: str) -> str:
+    return "".join(c for c in name.lower() if c.isalnum())
+
+
+def match_item(catalogue: Catalogue, name: str) -> CatalogueItem | None:
+    """The catalogue entry matching `name` after normalisation, or None if nothing
+    matches. Never a fuzzy match — see `nearest_item_name` for that, which only ever
+    names a suggestion and is never used to decide whether something matched."""
+    normalized = normalize_item_name(name)
+    for item in catalogue.all_items():
+        if normalize_item_name(item.name) == normalized:
+            return item
+    return None
+
+
+def nearest_item_name(catalogue: Catalogue, name: str, floor: float = 0.6) -> str | None:
+    """The closest catalogue entry name by similarity, for a flag or a hint only —
+    never used to decide a match. Below `floor`, returns None rather than naming an
+    unrelated item as though it were a near miss."""
+    items = catalogue.all_items()
+    if not items:
+        return None
+    normalized = normalize_item_name(name)
+    best_name, best_ratio = None, 0.0
+    for item in items:
+        ratio = SequenceMatcher(None, normalized, normalize_item_name(item.name)).ratio()
+        if ratio > best_ratio:
+            best_name, best_ratio = item.name, ratio
+    return best_name if best_ratio >= floor else None

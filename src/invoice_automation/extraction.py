@@ -75,6 +75,9 @@ Do NOT report a problem for:
 - A null field, whenever the document simply doesn't state that value.
 - currency being "USD" when the document uses a bare "$" with no currency code stated —
   that is the correct default, not an invented value, and is never worth reporting.
+- due_date being null when the document states something under that label that isn't a
+  real calendar date — "yesterday", "ASAP", "TBD", or similar. Leaving it null there is
+  correct, not a missed field; do not ask for it to be filled in.
 
 Say nothing is wrong unless you can point to a specific mismatch.\
 """

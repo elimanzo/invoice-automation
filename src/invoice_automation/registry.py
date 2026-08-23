@@ -40,6 +40,12 @@ class Registry(Protocol):
         """Record a payment. Raises DuplicatePayment for an identity already paid."""
         ...
 
+    def payments(self) -> list[PaymentRecord]:
+        """Every payment made. Read-only history — ticket 08's approval agent uses
+        this to build a vendor's prior-payment record; nothing in the pipeline writes
+        through it."""
+        ...
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS payments (

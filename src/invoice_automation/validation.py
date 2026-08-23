@@ -17,18 +17,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from difflib import SequenceMatcher
 
-from .catalogue import CatalogueItem
+from .catalogue import CatalogueItem, match_item, nearest_item_name, normalize_item_name
 from .config import FX_RATES_TO_USD, UnknownCurrency
 from .deps import Deps
 from .models import Correction, Flag, FlagSeverity, Invoice, LineItem
 
 _ROUNDING_TOLERANCE = Decimal("0.01")
-
-# Below this, a nearest-catalogue-entry suggestion isn't worth naming — it would just be
-# noise in the flag text for an item that plainly isn't a near-miss of anything real.
-_SUGGESTION_SIMILARITY_FLOOR = 0.6
 
 
 @dataclass(frozen=True)
@@ -106,7 +101,6 @@ def _check_vendor(invoice: Invoice, deps: Deps) -> list[Flag]:
 
 def _check_line_items(invoice: Invoice, deps: Deps) -> list[Flag]:
     flags: list[Flag] = []
-    catalogue_items = {item.name: item for item in deps.catalogue.all_items()}
 
     quantities_by_normalized: dict[str, int] = {}
     display_name_by_normalized: dict[str, str] = {}
@@ -124,15 +118,13 @@ def _check_line_items(invoice: Invoice, deps: Deps) -> list[Flag]:
             continue  # Excluded from aggregation: a corrupted line shouldn't mask or
             # reduce the aggregate quantity charged against the other, legitimate lines.
 
-        normalized = _normalize_item_name(line.item)
+        normalized = normalize_item_name(line.item)
         quantities_by_normalized[normalized] = (
             quantities_by_normalized.get(normalized, 0) + line.quantity
         )
         display_name_by_normalized[normalized] = line.item
         if normalized not in catalogue_match_by_normalized:
-            catalogue_match_by_normalized[normalized] = _match_catalogue_item(
-                line.item, catalogue_items
-            )
+            catalogue_match_by_normalized[normalized] = match_item(deps.catalogue, line.item)
 
         flags.extend(_check_price(line, catalogue_match_by_normalized[normalized]))
 
@@ -141,7 +133,7 @@ def _check_line_items(invoice: Invoice, deps: Deps) -> list[Flag]:
         catalogue_item = catalogue_match_by_normalized[normalized]
 
         if catalogue_item is None:
-            suggestion = _nearest_catalogue_name(display_name, catalogue_items)
+            suggestion = nearest_item_name(deps.catalogue, display_name)
             hint = f"; nearest catalogue entry {suggestion!r}" if suggestion else ""
             flags.append(
                 Flag(
@@ -276,34 +268,3 @@ def _line_items_disagree_with_stated_total(invoice: Invoice) -> bool:
         return abs(invoice.total - invoice.line_items_total) > _ROUNDING_TOLERANCE
 
     return False
-
-
-def _normalize_item_name(name: str) -> str:
-    return "".join(c for c in name.lower() if c.isalnum())
-
-
-def _match_catalogue_item(
-    item_name: str, catalogue_items: dict[str, CatalogueItem]
-) -> CatalogueItem | None:
-    normalized = _normalize_item_name(item_name)
-    for catalogue_name, catalogue_item in catalogue_items.items():
-        if _normalize_item_name(catalogue_name) == normalized:
-            return catalogue_item
-    return None
-
-
-def _nearest_catalogue_name(
-    item_name: str, catalogue_items: dict[str, CatalogueItem]
-) -> str | None:
-    """The closest catalogue entry name, for the flag text only — never used to match."""
-    if not catalogue_items:
-        return None
-    normalized = _normalize_item_name(item_name)
-    best_name, best_ratio = None, 0.0
-    for catalogue_name in catalogue_items:
-        ratio = SequenceMatcher(None, normalized, _normalize_item_name(catalogue_name)).ratio()
-        if ratio > best_ratio:
-            best_name, best_ratio = catalogue_name, ratio
-    if best_ratio < _SUGGESTION_SIMILARITY_FLOOR:
-        return None
-    return best_name
