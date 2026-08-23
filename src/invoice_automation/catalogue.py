@@ -16,6 +16,7 @@ others. Swapping in a real ERP is a construction change at the edge.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -63,6 +64,10 @@ CREATE TABLE IF NOT EXISTS vendors (
 """
 
 
+class UnknownItem(KeyError):
+    """An operation named an item the catalogue does not hold."""
+
+
 @dataclass(frozen=True)
 class CatalogueItem:
     """An item Acme stocks."""
@@ -90,33 +95,36 @@ class Catalogue(Protocol):
 
 
 def seed_catalogue(path: Path, *, reset: bool = False) -> None:
-    """Create the catalogue and populate it.
+    """Create the catalogue and populate it if it is empty.
 
-    Idempotent by default: existing rows are left alone, so calling this on a live
-    catalogue is safe. `reset=True` discards current contents and restores the seed,
-    which is what the explicit command is for.
+    Seeding an already-populated catalogue does nothing, so a row deliberately deleted
+    from a live catalogue stays deleted rather than reappearing on the next run.
+    `reset=True` discards current contents and restores the seed, which is what the
+    explicit command is for.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.executescript(_SCHEMA)
         if reset:
             conn.execute("DELETE FROM inventory")
             conn.execute("DELETE FROM vendors")
-        conn.executemany(
-            "INSERT OR IGNORE INTO inventory (item, stock, expected_unit_price) VALUES (?, ?, ?)",
-            SEED_ITEMS,
-        )
-        conn.executemany(
-            "INSERT OR IGNORE INTO vendors (name) VALUES (?)",
-            ((name,) for name in SEED_VENDORS),
-        )
+        if conn.execute("SELECT 1 FROM inventory LIMIT 1").fetchone() is None:
+            conn.executemany(
+                "INSERT INTO inventory (item, stock, expected_unit_price) VALUES (?, ?, ?)",
+                SEED_ITEMS,
+            )
+        if conn.execute("SELECT 1 FROM vendors LIMIT 1").fetchone() is None:
+            conn.executemany(
+                "INSERT INTO vendors (name) VALUES (?)",
+                ((name,) for name in SEED_VENDORS),
+            )
 
 
 class SqliteCatalogue:
     """SQLite-backed catalogue.
 
-    Self-seeds on construction, so there is no setup step a reader can skip. The
-    explicit seed command still exists for resetting deliberately.
+    Self-seeds on construction when empty, so there is no setup step a reader can skip.
+    The explicit seed command still exists for resetting deliberately.
     """
 
     def __init__(self, path: Path) -> None:
@@ -129,7 +137,7 @@ class SqliteCatalogue:
         return conn
 
     def get_item(self, name: str) -> CatalogueItem | None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT item, stock, expected_unit_price FROM inventory WHERE item = ?",
                 (name,),
@@ -137,21 +145,29 @@ class SqliteCatalogue:
         return _to_item(row) if row else None
 
     def all_items(self) -> list[CatalogueItem]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT item, stock, expected_unit_price FROM inventory ORDER BY item"
             ).fetchall()
         return [_to_item(row) for row in rows]
 
     def is_known_vendor(self, name: str) -> bool:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute("SELECT 1 FROM vendors WHERE name = ?", (name,)).fetchone()
         return row is not None
 
     def set_stock(self, item: str, stock: int) -> None:
-        """Adjust stock. Not part of the read protocol; used by tests and tooling."""
-        with self._connect() as conn:
-            conn.execute("UPDATE inventory SET stock = ? WHERE item = ?", (stock, item))
+        """Adjust stock. Not part of the read protocol; used by tests and tooling.
+
+        Raises `UnknownItem` rather than silently affecting no rows, so a mistyped item
+        name fails where it is made instead of somewhere later.
+        """
+        with closing(self._connect()) as conn, conn:
+            cursor = conn.execute(
+                "UPDATE inventory SET stock = ? WHERE item = ?", (stock, item)
+            )
+            if cursor.rowcount == 0:
+                raise UnknownItem(f"{item!r} is not in the catalogue")
 
 
 def _to_item(row: sqlite3.Row) -> CatalogueItem:

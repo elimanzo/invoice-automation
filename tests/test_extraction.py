@@ -55,11 +55,15 @@ def test_line_items_are_never_merged(invoices_dir: Path, deps: Deps) -> None:
 
 
 def test_unknown_document_fails_loudly(tmp_path: Path, deps: Deps) -> None:
-    """The fake provider has no canned answer here; that must not pass silently."""
+    """No recording exists for this document; that must not pass silently.
+
+    The error names the document rather than the invoice number: an invoice and its
+    revision share a number, so the document is what identifies a recording.
+    """
     path = tmp_path / "invoice_9999.txt"
     path.write_text("INVOICE\nInvoice Number: INV-9999\n", encoding="utf-8")
 
     with pytest.raises(LookupError) as excinfo:
         extract_invoice(load_document(path), deps)
 
-    assert "INV-9999" in str(excinfo.value)
+    assert "invoice_9999.txt" in str(excinfo.value)

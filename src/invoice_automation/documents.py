@@ -24,8 +24,18 @@ _SUFFIX_FORMATS = {
 }
 
 
+# Tried in order. UTF-8 first because it is correct for everything the sample data
+# contains; cp1252 second because ERP exports commonly use it and its bytes are
+# indistinguishable from latin-1 for the punctuation that actually appears in invoices.
+_ENCODINGS = ("utf-8", "cp1252")
+
+
 class UnsupportedDocument(Exception):
     """The file is not a format this system reads."""
+
+
+class UndecodableDocument(Exception):
+    """The file could not be decoded as text in any supported encoding."""
 
 
 @dataclass(frozen=True)
@@ -63,8 +73,24 @@ def load_document(path: Path) -> Document:
             "The text twin of this document can be used meanwhile."
         )
 
-    return Document(
-        path=path,
-        format=document_format,
-        raw_text=path.read_text(encoding="utf-8", errors="replace"),
+    return Document(path=path, format=document_format, raw_text=_read_text(path))
+
+
+def _read_text(path: Path) -> str:
+    """Decode a document, refusing to guess.
+
+    Substituting replacement characters would corrupt vendor and item names in the one
+    module whose whole contract is fidelity to the document — and extraction is
+    explicitly instructed to preserve names exactly. A file we cannot decode is a file
+    we must not pretend to have read.
+    """
+    raw = path.read_bytes()
+    for encoding in _ENCODINGS:
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise UndecodableDocument(
+        f"{path.name}: not decodable as {' or '.join(_ENCODINGS)}. "
+        "Convert the file to UTF-8 and retry."
     )

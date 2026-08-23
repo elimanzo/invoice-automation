@@ -98,6 +98,19 @@ class Invoice(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def line_items_total(self) -> Decimal:
-        """Sum of the line items, for comparison against the stated total."""
+    def unpriced_line_count(self) -> int:
+        """Line items whose amount cannot be determined at all."""
+        return sum(1 for item in self.line_items if item.amount is None)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def line_items_total(self) -> Decimal | None:
+        """Sum of the line items, for comparison against the stated total.
+
+        None when any line amount is unknown. Treating an unknown line as zero would
+        make the sum quietly *smaller*, so an invoice with a missing amount could match
+        its stated total and pass a check it should have failed.
+        """
+        if self.unpriced_line_count:
+            return None
         return sum((item.amount or Decimal(0) for item in self.line_items), Decimal(0))

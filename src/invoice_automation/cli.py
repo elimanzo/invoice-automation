@@ -13,7 +13,7 @@ from pathlib import Path
 from .catalogue import seed_catalogue
 from .config import Settings
 from .deps import build_deps
-from .documents import UnsupportedDocument, load_document
+from .documents import UndecodableDocument, UnsupportedDocument, load_document
 from .extraction import ExtractionFailed, extract_invoice
 from .models import Invoice
 
@@ -37,6 +37,14 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = Settings.from_env()
 
+    if args.seed_catalogue and args.invoice_path is not None:
+        print(
+            "error: --seed-catalogue resets the catalogue and processes nothing. "
+            "Run it on its own, then process the invoice.",
+            file=sys.stderr,
+        )
+        return 2
+
     if args.seed_catalogue:
         path = Path(settings.data_dir) / settings.catalogue_filename
         seed_catalogue(path, reset=True)
@@ -49,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         document = load_document(args.invoice_path)
-    except (FileNotFoundError, UnsupportedDocument) as exc:
+    except (FileNotFoundError, UnsupportedDocument, UndecodableDocument) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -97,7 +105,8 @@ def render(invoice: Invoice, *, document_name: str) -> str:
 
 
 def _money(value: object) -> str:
-    return "(none)" if value is None else f"{value:>10}"
+    """Right-aligned to a fixed width, so a missing value keeps the column."""
+    return f"{'(none)' if value is None else value:>10}"
 
 
 if __name__ == "__main__":  # pragma: no cover

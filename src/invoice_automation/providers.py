@@ -9,13 +9,11 @@ This ticket ships the fake. The Grok implementation arrives with ticket 03.
 
 from __future__ import annotations
 
+import copy
 import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
-
-_INVOICE_NUMBER = re.compile(r"\bINV[- ]?(\d{4})\b|\bInv\s*#:\s*(\d{4})\b", re.IGNORECASE)
 
 SAMPLE_RESPONSES_DIR = Path(__file__).parent / "sample_responses"
 
@@ -27,6 +25,14 @@ class StructuredCall:
     system: str
     user: str
     schema: dict[str, Any]
+    document_id: str
+    """Which document this call is about.
+
+    Carried explicitly rather than parsed back out of the prompt. Two documents in the
+    sample data state the same invoice number — an invoice and its revision — so invoice
+    number does not identify a call, and recovering an identifier by regex over prompt
+    text would silently return the wrong recording.
+    """
 
 
 @runtime_checkable
@@ -41,53 +47,52 @@ class Provider(Protocol):
         ...
 
 
+class MissingRecording(LookupError):
+    """No recorded response exists for this document."""
+
+
 @dataclass
 class FakeProvider:
-    """Replays canned responses. No network, no key, fully deterministic.
+    """Replays recorded responses. No network, no key, fully deterministic.
 
-    Keyed on the invoice number found in the prompt, because that is the one stable
-    identifier a document carries. A prompt whose invoice is unknown raises rather than
-    returning something plausible — a fake that silently invents data is worse than no
-    fake at all.
+    Keyed on document identity, so an invoice and its revision never collide. A document
+    with no recording raises rather than returning something plausible — a fake that
+    silently invents data is worse than no fake at all, and the same reasoning applies to
+    an empty response set: that raises at construction rather than failing later with a
+    confusing per-document error.
 
-    Ticket 18 replaces the canned responses with real recorded ones. The lookup
-    mechanism does not change.
+    Ticket 18 replaces these responses with real recorded ones. The lookup does not change.
     """
 
     responses: dict[str, dict[str, Any]] = field(default_factory=dict)
     calls: list[StructuredCall] = field(default_factory=list)
 
     @classmethod
-    def with_sample_responses(cls) -> FakeProvider:
+    def with_sample_responses(cls, directory: Path | None = None) -> FakeProvider:
         """Load the responses shipped alongside the package."""
-        responses: dict[str, dict[str, Any]] = {}
-        if SAMPLE_RESPONSES_DIR.is_dir():
-            for path in sorted(SAMPLE_RESPONSES_DIR.glob("*.json")):
-                responses[path.stem.upper()] = json.loads(path.read_text(encoding="utf-8"))
+        directory = directory or SAMPLE_RESPONSES_DIR
+        if not directory.is_dir():
+            raise FileNotFoundError(
+                f"No recorded responses at {directory}. The package ships them as package "
+                "data; a build that omits them leaves the fake provider unable to answer "
+                "anything."
+            )
+        responses = {
+            path.stem: json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(directory.glob("*.json"))
+        }
+        if not responses:
+            raise FileNotFoundError(f"No recorded responses found in {directory}.")
         return cls(responses=responses)
 
     def structured(self, call: StructuredCall) -> dict[str, Any]:
         self.calls.append(call)
-        key = _response_key(call.user)
-        if key is None:
-            raise LookupError(
-                "FakeProvider could not find an invoice number in the prompt, so it has "
-                "no way to choose a response. Known responses: "
-                f"{sorted(self.responses)}"
-            )
+        key = Path(call.document_id).stem
         if key not in self.responses:
-            raise LookupError(
-                f"FakeProvider has no recorded response for {key}. "
-                f"Known responses: {sorted(self.responses)}. "
+            raise MissingRecording(
+                f"No recorded response for {call.document_id!r}. "
+                f"Recorded: {sorted(self.responses)}. "
                 "Record one, or run against a real provider."
             )
-        return self.responses[key]
-
-
-def _response_key(prompt: str) -> str | None:
-    """The invoice number in a prompt, normalised to `INV-nnnn`."""
-    match = _INVOICE_NUMBER.search(prompt)
-    if match is None:
-        return None
-    digits = match.group(1) or match.group(2)
-    return f"INV-{digits}"
+        # A copy, so a caller mutating the result cannot corrupt the store for later calls.
+        return copy.deepcopy(self.responses[key])

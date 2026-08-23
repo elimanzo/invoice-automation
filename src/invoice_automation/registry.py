@@ -12,6 +12,7 @@ What exists here is the identity and payment record those depend on.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -59,11 +60,11 @@ class SqliteRegistry:
     def __init__(self, path: Path) -> None:
         self._path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             conn.executescript(_SCHEMA)
 
     def payment_recorded(self, invoice_number: str) -> bool:
-        with sqlite3.connect(self._path) as conn:
+        with closing(sqlite3.connect(self._path)) as conn:
             row = conn.execute(
                 "SELECT 1 FROM payments WHERE invoice_number = ?", (invoice_number,)
             ).fetchone()
@@ -71,7 +72,7 @@ class SqliteRegistry:
 
     def record_payment(self, invoice_number: str, vendor: str, amount: Decimal) -> None:
         try:
-            with sqlite3.connect(self._path) as conn:
+            with closing(sqlite3.connect(self._path)) as conn, conn:
                 conn.execute(
                     "INSERT INTO payments (invoice_number, vendor, amount) VALUES (?, ?, ?)",
                     (invoice_number, vendor, str(amount)),
@@ -82,7 +83,7 @@ class SqliteRegistry:
             ) from exc
 
     def payments(self) -> list[PaymentRecord]:
-        with sqlite3.connect(self._path) as conn:
+        with closing(sqlite3.connect(self._path)) as conn:
             rows = conn.execute(
                 "SELECT invoice_number, vendor, amount FROM payments ORDER BY invoice_number"
             ).fetchall()

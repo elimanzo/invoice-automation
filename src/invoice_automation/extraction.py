@@ -45,6 +45,7 @@ def extract_invoice(document: Document, deps: Deps) -> Invoice:
         system=SYSTEM_PROMPT,
         user=_user_prompt(document),
         schema=Invoice.model_json_schema(),
+        document_id=document.name,
     )
     payload: dict[str, Any] = deps.provider.structured(call)
 

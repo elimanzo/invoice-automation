@@ -19,6 +19,18 @@ ENV_DATA_DIR = "INVOICE_DATA_DIR"
 
 DEFAULT_BASE_URL = "https://api.x.ai/v1"
 DEFAULT_MODEL = "grok-4"
+DEFAULT_DATA_DIR = ".data"
+
+
+def _env(name: str, default: str) -> str:
+    """Read an environment variable, treating empty as unset.
+
+    A `.env` file conventionally carries keys with blank values, so `FOO=` must mean "use
+    the default" rather than "use the empty string". Without this, a blank
+    `INVOICE_DATA_DIR` would resolve to `Path("")` and write the databases into whatever
+    the working directory happens to be.
+    """
+    return os.environ.get(name, "").strip() or default
 
 
 @dataclass(frozen=True)
@@ -28,17 +40,17 @@ class Settings:
     api_key: str | None = None
     base_url: str = DEFAULT_BASE_URL
     model: str = DEFAULT_MODEL
-    data_dir: str = ".data"
+    data_dir: str = DEFAULT_DATA_DIR
     catalogue_filename: str = "catalogue.db"
     registry_filename: str = "registry.db"
 
     @classmethod
     def from_env(cls) -> Settings:
         return cls(
-            api_key=os.environ.get(ENV_API_KEY) or None,
-            base_url=os.environ.get(ENV_BASE_URL, DEFAULT_BASE_URL),
-            model=os.environ.get(ENV_MODEL, DEFAULT_MODEL),
-            data_dir=os.environ.get(ENV_DATA_DIR, ".data"),
+            api_key=os.environ.get(ENV_API_KEY, "").strip() or None,
+            base_url=_env(ENV_BASE_URL, DEFAULT_BASE_URL),
+            model=_env(ENV_MODEL, DEFAULT_MODEL),
+            data_dir=_env(ENV_DATA_DIR, DEFAULT_DATA_DIR),
         )
 
     @property
