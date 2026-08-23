@@ -246,8 +246,8 @@ views plus a drill-down.
     pipeline, so that inspecting a run is cheap and shows what actually happened.
 79. As an AP clerk, I want the dashboard to update live as processing proceeds, so that the
     pipeline view is genuinely live rather than a refresh button.
-80. As a grader, I want the dashboard to start with one Python command and no Node toolchain,
-    so that evaluating the system does not require a front-end build (ADR-0008).
+80. As a first-time user, I want the dashboard to start with one Python command and no Node
+    toolchain, so that running the system does not require a front-end build (ADR-0008).
 
 ### Observability and operation
 
@@ -264,17 +264,18 @@ views plus a drill-down.
 86. As an engineer, I want the LLM provider selected by flag, defaulting to the real provider
     when a key is present and the fake one otherwise, so that the system runs with or without
     credentials (ADR-0001).
-87. As a grader, I want the exact command from the brief to work verbatim, so that the first
+87. As a first-time user, I want the documented command to work verbatim, so that the first
     thing I try succeeds.
-88. As a grader, I want `pytest` green on a clean clone with no API key, so that correctness
+88. As a reviewer, I want `pytest` green on a clean clone with no API key, so that correctness
     is demonstrable without credentials.
 
 ### Setup
 
-89. As a grader, I want the inventory database created by a documented command with seed data
-    covering every item the sample invoices reference, so that validation works on first run.
-90. As a grader, I want setup to be one install command with no compiler required, so that
-    dependencies are not a barrier (ADR-0003).
+89. As a first-time user, I want the inventory database created by a documented command with
+    seed data covering every item the sample invoices reference, so that validation works on
+    first run.
+90. As a first-time user, I want setup to be one install command with no compiler required, so
+    that dependencies are not a barrier (ADR-0003).
 91. As a developer, I want the catalogue seed to include expected unit prices and known
     vendors, so that price and vendor validation have ground truth.
 
@@ -499,25 +500,21 @@ cassette approach are the patterns later work should copy.
 
 ## Further Notes
 
-**The evaluation is the audience.** This is a take-home assessed on functionality, code
-quality, agentic sophistication, shipping mindset, presentation, going beyond the brief, and
-UI/UX. Two consequences run through the spec: the exact command from the brief must work
-verbatim because it is the first thing tried, and `pytest` must be green on a clean clone with
-no API key because credentials cannot be assumed.
+**Two controls are not in the brief.** Duplicate and revision detection is absent from the
+requirements, but the sample data cannot be handled correctly without it: INV-1011 and
+INV-1013 each arrive as two documents, and INV-1004 has a revision that raises it by $4,050.
+Processing documents independently pays $7,830 against a $5,940 obligation. Likewise, nothing
+in the brief asks for risk-score compounding, but no single stated rule stops INV-1008.
+Both are treated as requirements here because the data demands them, not because they were
+requested.
 
-**The strongest work is not what the brief asked for.** Duplicate and revision detection is
-absent from the brief, but the data was clearly built to reward finding it — INV-1011 and
-INV-1013 arrive twice, and INV-1004 has a revision worth $4,050. A naive implementation
-overpays. That control, the risk-score compounding that catches INV-1008, and the caution
-ratchet that neutralises INV-1003's prompt injection are the three places this submission
-should distinguish itself.
+**Invoice text is untrusted input.** Several documents contain instructions aimed at whoever
+reads them — INV-1003 presses for immediate payment by wire. Any design that lets document
+text influence the approval outcome directly is an injection path, which is why the caution
+ratchet is a security boundary rather than a preference.
 
-**Ticket ordering.** Blocking edges run: catalogue seed and documents module first, then
-extraction, then validation, then reconciliation, then approval, then payment, then the graph
-wiring that joins them, then CLI, then web. The authored fixtures can be written any time
-after validation. Cassette recording depends on extraction and approval prompts being stable,
-so it comes late.
-
-**Verification before submission.** Two failure modes are easy to miss and fatal: a stale
-committed React bundle, and cassettes that no longer match changed prompts. Both belong in a
-pre-submission checklist.
+**Release checks.** Two failure modes are silent and severe. A committed React bundle can go
+stale against its source, shipping an interface that does not match the code. Recorded
+cassettes can drift out of sync with changed prompts, so the suite passes against responses
+the current prompts would never produce. Both need an explicit check before any release, not
+a habit.
