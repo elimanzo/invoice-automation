@@ -96,6 +96,15 @@ class Invoice(BaseModel):
         ),
     )
     notes: str | None = Field(default=None)
+    revision: str | None = Field(
+        default=None,
+        description=(
+            "A document's own declaration that it supersedes an earlier one for the "
+            "same invoice number (e.g. invoice_1004_revised.json's \"revision\": "
+            "\"R1\"). Absent for an ordinary invoice; ticket 10's reconciliation is "
+            "the only reader of this field."
+        ),
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -163,6 +172,17 @@ class Decision(BaseModel):
 
     outcome: Literal["approved", "rejected", "escalated"]
     reasoning: str
+
+
+class HumanReview(BaseModel):
+    """A reviewer's decision on an escalated invoice (ticket 11) — the resume payload,
+    recorded verbatim as its own audit-trail entry rather than folded only into
+    `Decision.reasoning`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    outcome: Literal["approved", "rejected"]
+    reason: str
 
 
 class ToolCallRecord(BaseModel):

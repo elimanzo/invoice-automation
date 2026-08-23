@@ -14,13 +14,23 @@ from __future__ import annotations
 
 import copy
 import json
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from openai import OpenAI, OpenAIError
 
+from .cache import LLMCache, hash_request
+from .cost import compute_cost, estimate_tokens
+from .structured_logging import log_event
+from .tracing import LlmCallEvent, Tracer
+
 SAMPLE_RESPONSES_DIR = Path(__file__).parent / "sample_responses"
+
+_T = TypeVar("_T")
 
 TOOL_NAME = "record_invoice"
 
@@ -333,3 +343,177 @@ class ToolCallingProvider(Protocol):
         the provider only ever sees what it's given, same as `structured()`.
         """
         ...
+
+
+# ---------------------------------------------------------------------------
+# Observability (ticket 12): every call recorded — prompt, response, latency, tokens,
+# cost — and served from a content-hash cache when the exact request has been seen
+# before. Wraps any `Provider` transparently, so extraction.py and approval.py need not
+# know their calls are being watched.
+#
+# Two classes, not one with an optional method, because `isinstance(provider,
+# ToolCallingProvider)` (approval.py) is how the pipeline decides whether an agent
+# investigation is even possible. A single class that always defined `converse` — even
+# one that raised inside it — would make every wrapped provider look tool-calling-
+# capable to that check, regardless of what it actually wraps.
+# ---------------------------------------------------------------------------
+
+
+class _ObservedProvider:
+    """Wraps a `Provider`. Constructed fresh per run (graph.py) so every event carries
+    that run's id, while the cache and tracer underneath are shared across runs."""
+
+    def __init__(
+        self,
+        inner: Provider,
+        *,
+        tracer: Tracer,
+        cache: LLMCache,
+        run_id: str,
+        model: str,
+    ) -> None:
+        self._inner = inner
+        self._tracer = tracer
+        self._cache = cache
+        self._run_id = run_id
+        self._model = model
+
+    def structured(self, call: StructuredCall) -> dict[str, Any]:
+        key = hash_request(
+            {
+                "kind": "structured",
+                "system": call.system,
+                "user": call.user,
+                "schema": call.schema,
+                "model": self._model,
+            }
+        )
+        return self._call(
+            kind=call.kind,
+            key=key,
+            prompt=call.system + call.user,
+            do_call=lambda: self._inner.structured(call),
+            to_cacheable=lambda result: result,
+            from_cacheable=lambda payload: payload,
+        )
+
+    def _call(
+        self,
+        *,
+        kind: str,
+        key: str,
+        prompt: str,
+        do_call: Callable[[], _T],
+        to_cacheable: Callable[[_T], dict[str, Any]],
+        from_cacheable: Callable[[dict[str, Any]], _T],
+    ) -> _T:
+        """Shared shape behind both `structured()` and `converse()` (the subclass
+        below): check the cache, call through on a miss, record what happened either
+        way. `to_cacheable`/`from_cacheable` bridge each call type's own return shape
+        (a plain dict for `structured`, an `AssistantTurn` for `converse`) to and from
+        the JSON the cache stores.
+        """
+        start = time.perf_counter()
+        cached = self._cache.get(key)
+        cache_hit = cached is not None
+        if cached is not None:
+            payload = cached["response"]
+            result = from_cacheable(payload)
+        else:
+            result = do_call()
+            payload = to_cacheable(result)
+            self._cache.set(key, {"response": payload})
+
+        self._record(
+            kind,
+            cache_hit=cache_hit,
+            start=start,
+            prompt=prompt,
+            response=json.dumps(payload, default=str),
+        )
+        return result
+
+    def _record(
+        self, kind: str, *, cache_hit: bool, start: float, prompt: str, response: str
+    ) -> None:
+        latency_ms = (time.perf_counter() - start) * 1000
+        prompt_tokens = estimate_tokens(prompt)
+        completion_tokens = estimate_tokens(response)
+        # No cost on a cache hit: nothing was actually spent, however big the request.
+        cost = (
+            Decimal("0")
+            if cache_hit
+            else compute_cost(self._model, prompt_tokens, completion_tokens)
+        )
+        event = LlmCallEvent(
+            run_id=self._run_id,
+            kind=kind,
+            cache_hit=cache_hit,
+            latency_ms=latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=cost,
+            prompt=prompt,
+            response=response,
+        )
+        self._tracer.record_llm_call(event)
+        # The full prompt/response lives in the trace (queryable per run); the log line
+        # stays terse so a batch's logs don't balloon with invoice text repeated call
+        # after call.
+        log_event(
+            self._run_id,
+            "llm_call",
+            kind=kind,
+            cache_hit=cache_hit,
+            latency_ms=latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=str(event.cost_usd),
+        )
+
+
+class _ObservedToolCallingProvider(_ObservedProvider):
+    """Adds `converse` — only present when `inner` actually supports it, so the
+    `isinstance(..., ToolCallingProvider)` gate in approval.py sees through the wrapper
+    correctly (see the module note above)."""
+
+    def converse(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> AssistantTurn:
+        inner = cast(ToolCallingProvider, self._inner)
+        key = hash_request(
+            {"kind": "converse", "messages": messages, "tools": tools, "model": self._model}
+        )
+        return self._call(
+            kind="converse",
+            key=key,
+            prompt=json.dumps(messages, default=str),
+            do_call=lambda: inner.converse(messages, tools),
+            to_cacheable=lambda turn: {
+                "content": turn.content,
+                "tool_calls": [
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    for tc in turn.tool_calls
+                ],
+            },
+            from_cacheable=lambda payload: AssistantTurn(
+                content=payload["content"],
+                tool_calls=[ToolCall(**tc) for tc in payload["tool_calls"]],
+            ),
+        )
+
+
+def wrap_provider(
+    provider: Provider, *, tracer: Tracer, cache: LLMCache, run_id: str, model: str
+) -> Provider:
+    """Instrument `provider` for one run: every call recorded and cached.
+
+    Picks the tool-calling variant only when `provider` actually supports `converse`,
+    so the wrapped result advertises exactly the capability the original had — no more,
+    no less.
+    """
+    if isinstance(provider, ToolCallingProvider):
+        return _ObservedToolCallingProvider(
+            provider, tracer=tracer, cache=cache, run_id=run_id, model=model
+        )
+    return _ObservedProvider(provider, tracer=tracer, cache=cache, run_id=run_id, model=model)

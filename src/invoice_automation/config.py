@@ -47,6 +47,11 @@ FX_RATES_TO_USD: dict[str, Decimal] = {
     "EUR": Decimal("1.08"),
 }
 
+# Crossed by compounding soft flags, not by any single one alone — this is what makes
+# INV-1008 (unknown vendor, two uncatalogued items, $9,900 — just under the dollar
+# threshold) escalate on judgement rather than sail through on a technicality.
+RISK_ESCALATION_THRESHOLD = 5
+
 # What a soft flag costs toward the risk score, by flag code. A flag with no entry here
 # contributes nothing — fatal flags reject outright before risk is ever computed, and
 # info flags are visibility only.
@@ -59,18 +64,29 @@ RISK_WEIGHTS: dict[str, int] = {
     "non_usd_currency": 1,
     "due_date_before_invoice_date": 2,
     "due_date_in_the_past": 2,
+    # Two documents for the same invoice disagree, and reconciliation refuses to guess
+    # which is right (reconciliation.py). This alone must force escalation — set equal
+    # to the threshold itself so it always crosses it, referencing the constant rather
+    # than a hardcoded number that could silently drift out of sync with it.
+    "duplicate_contradiction": RISK_ESCALATION_THRESHOLD,
 }
-
-# Crossed by compounding soft flags, not by any single one alone — this is what makes
-# INV-1008 (unknown vendor, two uncatalogued items, $9,900 — just under the dollar
-# threshold) escalate on judgement rather than sail through on a technicality.
-RISK_ESCALATION_THRESHOLD = 5
 
 # The approval agent's investigation is bounded: this many tool calls before it must
 # conclude. Exhausting the bound without a conclusion fails closed — the deterministic
 # rule-based decision stands unchanged, never guessed at from an inconclusive
 # investigation.
 APPROVAL_MAX_TOOL_CALLS = 4
+
+ENV_CACHE_ENABLED = "INVOICE_CACHE_ENABLED"
+DEFAULT_CACHE_ENABLED = True
+
+# USD per 1,000 tokens, (prompt rate, completion rate), by model. An unlisted model
+# falls back to DEFAULT_TOKEN_RATE (ticket 12) — a cost estimate, not a billing system;
+# see cost.py.
+MODEL_TOKEN_RATES: dict[str, tuple[Decimal, Decimal]] = {
+    "grok-4": (Decimal("0.003"), Decimal("0.015")),
+}
+DEFAULT_TOKEN_RATE: tuple[Decimal, Decimal] = MODEL_TOKEN_RATES["grok-4"]
 
 
 def _env(name: str, default: str) -> str:
@@ -94,6 +110,7 @@ class Settings:
     data_dir: str = DEFAULT_DATA_DIR
     catalogue_filename: str = "catalogue.db"
     registry_filename: str = "registry.db"
+    cache_enabled: bool = DEFAULT_CACHE_ENABLED
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -102,6 +119,7 @@ class Settings:
             base_url=_env(ENV_BASE_URL, DEFAULT_BASE_URL),
             model=_env(ENV_MODEL, DEFAULT_MODEL),
             data_dir=_env(ENV_DATA_DIR, DEFAULT_DATA_DIR),
+            cache_enabled=_env(ENV_CACHE_ENABLED, "true").lower() not in {"0", "false", "no"},
         )
 
     @property

@@ -25,10 +25,13 @@ from .documents import (
     load_document,
 )
 from .extraction import ExtractionFailed
-from .graph import RunResult, run_invoice
-from .models import Decision, Flag, Invoice
+from .graph import NotAwaitingReview, RunResult, resume_invoice, run_invoice
+from .models import Decision, Flag, HumanReview, Invoice
+from .overrides import build_override_report, render_override_report
 from .payments import PaymentResult
+from .reconciliation import RevisionAfterPayment
 from .providers import ProviderUnavailable
+from .structured_logging import configure_logging
 
 CHECKPOINT_FILENAME = "checkpoints.db"
 
@@ -65,9 +68,91 @@ def main(argv: list[str] | None = None) -> int:
             "fake otherwise."
         ),
     )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        metavar="DOCUMENT_NAME",
+        help=(
+            "Resume an escalated invoice paused at approval (ADR-0005). Takes the "
+            "document name reported at escalation. Requires --decision and --reason."
+        ),
+    )
+    parser.add_argument(
+        "--decision",
+        choices=["approved", "rejected"],
+        default=None,
+        help="The human decision to resume with. Required with --resume.",
+    )
+    parser.add_argument(
+        "--reason",
+        type=str,
+        default=None,
+        help="The reviewer's reason for the decision. Required with --resume.",
+    )
+    parser.add_argument(
+        "--override-report",
+        action="store_true",
+        help=(
+            "Report escalation rate and how often a human then approved what was "
+            "escalated, then exit. Processes nothing."
+        ),
+    )
     args = parser.parse_args(argv)
 
+    configure_logging()
     settings = Settings.from_env()
+
+    if args.override_report:
+        report_others = (args.invoice_path, args.invoice_dir, args.seed_catalogue, args.resume)
+        if any(report_others):
+            print(
+                "error: --override-report processes nothing else. Run it on its own.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            deps = build_deps(settings, provider=args.provider)
+        except MissingApiKey as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        report = build_override_report(
+            deps.overrides.list(), total_runs=len(deps.tracer.run_ids())
+        )
+        print(render_override_report(report))
+        return 0
+
+    if args.resume is not None:
+        others = (args.invoice_path, args.invoice_dir, args.seed_catalogue)
+        if any(other for other in others):
+            print(
+                "error: --resume processes nothing else. Run it on its own.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.decision is None or args.reason is None:
+            print("error: --resume requires both --decision and --reason.", file=sys.stderr)
+            return 2
+
+        try:
+            deps = build_deps(settings, provider=args.provider)
+        except MissingApiKey as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        checkpoint_path = Path(settings.data_dir) / CHECKPOINT_FILENAME
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(checkpoint_path, check_same_thread=False)) as conn:
+            review = HumanReview(outcome=args.decision, reason=args.reason)
+            try:
+                result = resume_invoice(
+                    args.resume, review, deps, checkpointer=SqliteSaver(conn)
+                )
+            except NotAwaitingReview as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+
+        print(render(result, document_name=args.resume))
+        return 0
 
     if args.invoice_path is not None and args.invoice_dir is not None:
         print(
@@ -139,7 +224,13 @@ def main(argv: list[str] | None = None) -> int:
         checkpointer = SqliteSaver(conn)
         try:
             result = run_invoice(document, deps, checkpointer=checkpointer)
-        except (ExtractionFailed, LookupError, ProviderUnavailable, UnknownCurrency) as exc:
+        except (
+            ExtractionFailed,
+            LookupError,
+            ProviderUnavailable,
+            UnknownCurrency,
+            RevisionAfterPayment,
+        ) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 

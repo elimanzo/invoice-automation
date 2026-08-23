@@ -112,6 +112,7 @@ def _parse_json(text: str) -> Invoice:
         "currency": raw.get("currency") or "USD",
         "payment_terms": raw.get("payment_terms"),
         "notes": raw.get("notes"),
+        "revision": raw.get("revision"),
     }
     return _validate(payload, source="JSON")
 
