@@ -285,12 +285,16 @@ views plus a drill-down.
 
 Seven modules, each with a narrow interface:
 
-- **documents** — format detection and text extraction. Takes bytes plus a filename, returns
-  raw text plus a format marker. Owns the PDF path and is the only module that touches
-  `pdfplumber`. Raises a typed extraction failure when a PDF has no text layer.
-- **extraction** — raw text to a structured invoice. Owns the LLM extraction prompt, the
-  Pydantic invoice schema used as the tool definition, the repair helpers (amount, date, item
-  name), and the extraction critique loop. Emits corrections alongside the invoice.
+- **documents** — format detection and routing. Structured formats (JSON, CSV, XML) are parsed
+  deterministically here with no provider call, per ADR-0009; unstructured input (text, PDF,
+  email body) is reduced to raw text for the extraction module. Owns the PDF path and is the
+  only module that touches `pdfplumber`. Raises a typed extraction failure when a PDF has no
+  text layer, and falls back to model extraction when a structured document fails to parse.
+- **extraction** — raw text to a structured invoice, for documents the deterministic path did
+  not handle. Owns the LLM extraction prompt, the Pydantic invoice schema used as the tool
+  definition, the repair helpers (amount, date, item name), and the extraction critique loop.
+  Emits corrections alongside the invoice. Both ingestion paths converge on one invoice model,
+  so no later stage knows which ran.
 - **catalogue** — the SQLite inventory: items with stock and expected unit price, plus known
   vendors. Read-only from the pipeline's perspective; a separate seeding entry point creates
   and populates it.
@@ -301,7 +305,9 @@ Seven modules, each with a narrow interface:
   the four reconciliation outcomes, and the payment-idempotency guarantee.
 - **approval** — deterministic rule evaluation, the LLM reasoning call, the approval critique
   loop, and the caution ratchet that constrains how the LLM may move the outcome.
-- **payment** — wraps the mock payment function and records to the registry.
+- **payment** — wraps the mock payment function and records to the registry, whose ledger
+  carries a uniqueness constraint on invoice identity, so double payment is impossible at the
+  storage layer rather than merely prevented by application logic.
 
 Plus three at the edges: **graph** (LangGraph wiring, state model, checkpointer), **cli**, and
 **web** (FastAPI plus the served React bundle).
@@ -359,6 +365,10 @@ Rules compute the outcome; the LLM may only move it toward more caution. Approve
 escalate; escalate may become reject; reject is terminal. The LLM cannot approve what the
 rules did not. This is a security boundary as much as a correctness one — invoice text is
 untrusted input that sometimes argues with its reader.
+
+One consequence follows directly: a fatally flagged invoice skips the critique loop, because
+the ratchet forbids the model from downgrading a rejection, so the call cannot change the
+outcome. Reasoning for the rejection is still recorded, as the brief requires.
 
 ### Item matching
 
@@ -435,9 +445,15 @@ Three layers, per ADR-0006:
    offline. These exercise the full graph through the primary seam against real model output.
    Deterministic, free, and no key needed. The `fake` provider and the cassette replay share
    one implementation.
-3. **Evals, scored not asserted.** The golden set — 16 provided invoices plus 4 authored ones
-   — scored on per-field extraction accuracy and decision agreement. Reports a percentage so
-   that a prompt change surfaces as "94% to 81%" rather than one opaque failure.
+3. **Evals, scored not asserted.** Per-field extraction accuracy and decision agreement,
+   reported as percentages so that a prompt change surfaces as "94% to 81%" rather than one
+   opaque failure. Scored expectations cover only outcomes specified externally — the four
+   scenarios the brief states, and the authored fixtures whose ground truth is known by
+   construction. Expectations invented for the remaining provided invoices would measure
+   agreement with ourselves rather than correctness, so those invoices are processed and
+   reported but not scored, and the report distinguishes the two so coverage is never
+   overstated. Where a structured document was parsed deterministically its fields are genuine
+   ground truth, and the model path can be scored against them.
 
 A live smoke test runs only when `XAI_API_KEY` is present and skips otherwise.
 
@@ -481,10 +497,14 @@ cassette approach are the patterns later work should copy.
 
 - **Real integrations.** Payment, inventory, and approval routing are mocked per the brief.
   No real banking API, no email sending, no OCR service.
-- **OCR.** All provided PDFs carry text layers; the authored image-only PDF exists to prove
-  the failure path is graceful, not to be read.
-- **Purchase-order matching.** INV-1012 cites `Ref PO-20260115`, but no PO data exists.
-  Validating against invented PO records would be grading our own fiction.
+- **Vision extraction, deferred rather than refused.** All provided PDFs carry text layers, so
+  nothing in the dataset requires reading pixels. A multimodal pass over a rendered page would
+  turn the authored image-only fixture from a graceful failure into a processed invoice; it is
+  deferred until the core pipeline is complete rather than ruled out.
+- **Purchase-order matching.** Three-way matching against purchase orders is the stronger
+  real-world control, but exactly one document in the dataset cites a purchase order, so any
+  records to match against would be invented. The reference is captured and flagged as
+  uncheckable instead, which states the limitation without fabricating data.
 - **Authentication and multi-tenancy.** The dashboard has no login. Roles shape the views,
   not permissions.
 - **Concurrent batch processing.** Sequential by decision. The registry race concurrency
