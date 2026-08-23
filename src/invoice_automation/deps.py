@@ -11,15 +11,18 @@ touches one type instead of every call site and every test.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from .cache import LLMCache, NullCache, SqliteCache
 from .catalogue import Catalogue, SqliteCatalogue
 from .clock import Clock, SystemClock
-from .config import MissingApiKey, Settings
+from .config import DEFAULT_MODEL, MissingApiKey, Settings
+from .overrides import InMemoryOverrideStore, OverrideStore, SqliteOverrideStore
 from .payments import MockPayment, PaymentGateway
 from .providers import FakeProvider, GrokProvider, Provider
 from .registry import Registry, SqliteRegistry
+from .tracing import InMemoryTracer, SqliteTracer, Tracer
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,13 @@ class Deps:
     payment: PaymentGateway
     clock: Clock
     registry: Registry
+    model: str = DEFAULT_MODEL
+    """Which model `provider` calls — carried here rather than read off the provider
+    itself, since `FakeProvider` doesn't name one. Only used for cost accounting
+    (ticket 12); it names nothing the pipeline behaves differently for."""
+    tracer: Tracer = field(default_factory=InMemoryTracer)
+    cache: LLMCache = field(default_factory=NullCache)
+    overrides: OverrideStore = field(default_factory=InMemoryOverrideStore)
 
 
 def build_deps(settings: Settings | None = None, *, provider: str | None = None) -> Deps:
@@ -46,12 +56,20 @@ def build_deps(settings: Settings | None = None, *, provider: str | None = None)
     settings = settings or Settings.from_env()
     data_dir = Path(settings.data_dir)
 
+    cache: LLMCache = (
+        SqliteCache(data_dir / "llm_cache.db") if settings.cache_enabled else NullCache()
+    )
+
     return Deps(
         provider=_build_provider(settings, provider),
         catalogue=SqliteCatalogue(data_dir / settings.catalogue_filename),
         payment=MockPayment(),
         clock=SystemClock(),
         registry=SqliteRegistry(data_dir / settings.registry_filename),
+        model=settings.model,
+        tracer=SqliteTracer(data_dir / "trace.db"),
+        cache=cache,
+        overrides=SqliteOverrideStore(data_dir / "overrides.db"),
     )
 
 

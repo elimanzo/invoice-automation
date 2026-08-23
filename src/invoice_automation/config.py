@@ -77,6 +77,17 @@ RISK_WEIGHTS: dict[str, int] = {
 # investigation.
 APPROVAL_MAX_TOOL_CALLS = 4
 
+ENV_CACHE_ENABLED = "INVOICE_CACHE_ENABLED"
+DEFAULT_CACHE_ENABLED = True
+
+# USD per 1,000 tokens, (prompt rate, completion rate), by model. An unlisted model
+# falls back to DEFAULT_TOKEN_RATE (ticket 12) — a cost estimate, not a billing system;
+# see cost.py.
+MODEL_TOKEN_RATES: dict[str, tuple[Decimal, Decimal]] = {
+    "grok-4": (Decimal("0.003"), Decimal("0.015")),
+}
+DEFAULT_TOKEN_RATE: tuple[Decimal, Decimal] = MODEL_TOKEN_RATES["grok-4"]
+
 
 def _env(name: str, default: str) -> str:
     """Read an environment variable, treating empty as unset.
@@ -99,6 +110,7 @@ class Settings:
     data_dir: str = DEFAULT_DATA_DIR
     catalogue_filename: str = "catalogue.db"
     registry_filename: str = "registry.db"
+    cache_enabled: bool = DEFAULT_CACHE_ENABLED
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -107,6 +119,7 @@ class Settings:
             base_url=_env(ENV_BASE_URL, DEFAULT_BASE_URL),
             model=_env(ENV_MODEL, DEFAULT_MODEL),
             data_dir=_env(ENV_DATA_DIR, DEFAULT_DATA_DIR),
+            cache_enabled=_env(ENV_CACHE_ENABLED, "true").lower() not in {"0", "false", "no"},
         )
 
     @property

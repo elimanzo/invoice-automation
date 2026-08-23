@@ -22,7 +22,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TypedDict
@@ -46,10 +46,13 @@ from .models import (
     Invoice,
     ToolCallRecord,
 )
+from .overrides import Override
 from .payments import PaymentResult
+from .providers import wrap_provider
 from .reconciliation import reconcile
 from .registry import DuplicatePayment, normalize_invoice_identity
 from .structured_parsing import StructuredParseFailed, parse_structured
+from .tracing import traced_stage
 from .validation import validate_invoice
 
 _STRUCTURED_FORMATS = frozenset(
@@ -211,6 +214,16 @@ def _await_review(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     )
     review = HumanReview.model_validate(payload)
 
+    deps.overrides.record(
+        Override(
+            document_name=state["document_name"],
+            system_outcome=decision.outcome,
+            system_reasoning=decision.reasoning,
+            human_outcome=review.outcome,
+            reason=review.reason,
+        )
+    )
+
     reasoning = f"{decision.reasoning} Human review ({review.outcome}): {review.reason}"
     return {
         "decision": Decision(outcome=review.outcome, reasoning=reasoning).model_dump(
@@ -284,16 +297,28 @@ def _pay(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     }
 
 
+def _traced(name: str, fn: Any, deps: Deps) -> Any:
+    """Wrap a node so its execution is timed and persisted to `deps.tracer` under the
+    run's own id — the document name, same as the graph's `thread_id`."""
+
+    def wrapper(state: PipelineState) -> dict[str, Any]:
+        run_id = state["document_name"]
+        with traced_stage(deps.tracer, run_id, name):
+            return fn(state, deps=deps)  # type: ignore[no-any-return]
+
+    return wrapper
+
+
 def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> Any:
     """Wire the four stages. Deps are bound into the nodes at construction, so a node's
     signature stays `(state) -> dict` — what LangGraph expects — without a global."""
     builder = StateGraph(PipelineState)
-    builder.add_node("ingest", lambda state: _ingest(state, deps=deps))
-    builder.add_node("reconcile", lambda state: _reconcile(state, deps=deps))
-    builder.add_node("validate", lambda state: _validate(state, deps=deps))
-    builder.add_node("approve", lambda state: _approve(state, deps=deps))
-    builder.add_node("await_review", lambda state: _await_review(state, deps=deps))
-    builder.add_node("pay", lambda state: _pay(state, deps=deps))
+    builder.add_node("ingest", _traced("ingest", _ingest, deps))
+    builder.add_node("reconcile", _traced("reconcile", _reconcile, deps))
+    builder.add_node("validate", _traced("validate", _validate, deps))
+    builder.add_node("approve", _traced("approve", _approve, deps))
+    builder.add_node("await_review", _traced("await_review", _await_review, deps))
+    builder.add_node("pay", _traced("pay", _pay, deps))
 
     builder.add_edge(START, "ingest")
     builder.add_edge("ingest", "reconcile")
@@ -329,6 +354,24 @@ def _checkpointer(
         conn.close()
 
 
+def _observed(deps: Deps, run_id: str) -> Deps:
+    """`deps` with its provider wrapped for observability (ticket 12), tagged with
+    `run_id`. Done per run rather than in `build_deps`: the wrapper needs a run id to
+    tag events with, while the cache and tracer underneath — where the durability
+    actually lives — are `deps`'s own and shared across every run that uses it.
+    """
+    return replace(
+        deps,
+        provider=wrap_provider(
+            deps.provider,
+            tracer=deps.tracer,
+            cache=deps.cache,
+            run_id=run_id,
+            model=deps.model,
+        ),
+    )
+
+
 def run_invoice(
     document: Document,
     deps: Deps,
@@ -341,8 +384,9 @@ def run_invoice(
     still checkpoints after every node, so the behaviour under test is real, but nothing
     touches disk. The CLI passes a persistent one so a run's trace survives the process.
     """
+    observed_deps = _observed(deps, document.name)
     with _checkpointer(checkpointer) as active:
-        graph = build_graph(deps, active)
+        graph = build_graph(observed_deps, active)
         config: RunnableConfig = {"configurable": {"thread_id": document.name}}
 
         initial: PipelineState = {
@@ -378,7 +422,8 @@ def resume_invoice(
     thread_id `run_invoice` used, since that is what a reviewer sees the escalation
     filed under.
     """
-    graph = build_graph(deps, checkpointer)
+    observed_deps = _observed(deps, document_name)
+    graph = build_graph(observed_deps, checkpointer)
     config: RunnableConfig = {"configurable": {"thread_id": document_name}}
 
     snapshot = graph.get_state(config)

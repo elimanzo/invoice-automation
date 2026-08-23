@@ -27,9 +27,11 @@ from .documents import (
 from .extraction import ExtractionFailed
 from .graph import NotAwaitingReview, RunResult, resume_invoice, run_invoice
 from .models import Decision, Flag, HumanReview, Invoice
+from .overrides import build_override_report, render_override_report
 from .payments import PaymentResult
 from .reconciliation import RevisionAfterPayment
 from .providers import ProviderUnavailable
+from .structured_logging import configure_logging
 
 CHECKPOINT_FILENAME = "checkpoints.db"
 
@@ -87,9 +89,37 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="The reviewer's reason for the decision. Required with --resume.",
     )
+    parser.add_argument(
+        "--override-report",
+        action="store_true",
+        help=(
+            "Report escalation rate and how often a human then approved what was "
+            "escalated, then exit. Processes nothing."
+        ),
+    )
     args = parser.parse_args(argv)
 
+    configure_logging()
     settings = Settings.from_env()
+
+    if args.override_report:
+        report_others = (args.invoice_path, args.invoice_dir, args.seed_catalogue, args.resume)
+        if any(report_others):
+            print(
+                "error: --override-report processes nothing else. Run it on its own.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            deps = build_deps(settings, provider=args.provider)
+        except MissingApiKey as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        report = build_override_report(
+            deps.overrides.list(), total_runs=len(deps.tracer.run_ids())
+        )
+        print(render_override_report(report))
+        return 0
 
     if args.resume is not None:
         others = (args.invoice_path, args.invoice_dir, args.seed_catalogue)
