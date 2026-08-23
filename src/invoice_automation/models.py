@@ -174,6 +174,17 @@ class Decision(BaseModel):
     reasoning: str
 
 
+class HumanReview(BaseModel):
+    """A reviewer's decision on an escalated invoice (ticket 11) — the resume payload,
+    recorded verbatim as its own audit-trail entry rather than folded only into
+    `Decision.reasoning`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    outcome: Literal["approved", "rejected"]
+    reason: str
+
+
 class ToolCallRecord(BaseModel):
     """One read-only tool call the approval agent made, and what it got back — the
     trace ticket 08 asks for, so an investigation can be inspected after the fact."""

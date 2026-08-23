@@ -25,8 +25,8 @@ from .documents import (
     load_document,
 )
 from .extraction import ExtractionFailed
-from .graph import RunResult, run_invoice
-from .models import Decision, Flag, Invoice
+from .graph import NotAwaitingReview, RunResult, resume_invoice, run_invoice
+from .models import Decision, Flag, HumanReview, Invoice
 from .payments import PaymentResult
 from .reconciliation import RevisionAfterPayment
 from .providers import ProviderUnavailable
@@ -66,9 +66,63 @@ def main(argv: list[str] | None = None) -> int:
             "fake otherwise."
         ),
     )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        metavar="DOCUMENT_NAME",
+        help=(
+            "Resume an escalated invoice paused at approval (ADR-0005). Takes the "
+            "document name reported at escalation. Requires --decision and --reason."
+        ),
+    )
+    parser.add_argument(
+        "--decision",
+        choices=["approved", "rejected"],
+        default=None,
+        help="The human decision to resume with. Required with --resume.",
+    )
+    parser.add_argument(
+        "--reason",
+        type=str,
+        default=None,
+        help="The reviewer's reason for the decision. Required with --resume.",
+    )
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
+
+    if args.resume is not None:
+        others = (args.invoice_path, args.invoice_dir, args.seed_catalogue)
+        if any(other for other in others):
+            print(
+                "error: --resume processes nothing else. Run it on its own.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.decision is None or args.reason is None:
+            print("error: --resume requires both --decision and --reason.", file=sys.stderr)
+            return 2
+
+        try:
+            deps = build_deps(settings, provider=args.provider)
+        except MissingApiKey as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        checkpoint_path = Path(settings.data_dir) / CHECKPOINT_FILENAME
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(checkpoint_path, check_same_thread=False)) as conn:
+            review = HumanReview(outcome=args.decision, reason=args.reason)
+            try:
+                result = resume_invoice(
+                    args.resume, review, deps, checkpointer=SqliteSaver(conn)
+                )
+            except NotAwaitingReview as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+
+        print(render(result, document_name=args.resume))
+        return 0
 
     if args.invoice_path is not None and args.invoice_dir is not None:
         print(

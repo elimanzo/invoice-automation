@@ -1,10 +1,10 @@
-"""The graph: four stages, one state, one seam.
+"""The graph: ingest, reconcile, validate, approve, an interrupt for escalation, pay.
 
 Per ADR-0002, LangGraph gives the workflow what a straight pipeline function could not —
-conditional branching and cycles for later tickets, a checkpointer that persists state
-after every node, and a diagram generated from the graph that actually runs. This ticket
-wires the graph linearly (ingest, validate, approve, pay); branching, the critique loops,
-and interrupt-and-resume arrive as the tickets that need them.
+conditional branching and cycles, a checkpointer that persists state after every node,
+and a diagram generated from the graph that actually runs. Per ADR-0005, an escalated
+invoice branches to `await_review` and interrupts there rather than proceeding straight
+to `pay`; `resume_invoice` is what a human decision continues from.
 
 State is a plain, JSON-shaped dict rather than a Pydantic model directly. LangGraph's
 checkpointer round-trips a TypedDict of primitives and dicts without needing any type
@@ -31,12 +31,21 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
 
 from .approval import decide, run_approval_agent
 from .deps import Deps
 from .documents import Document
 from .extraction import extract_invoice
-from .models import Correction, Decision, DocumentFormat, Flag, Invoice, ToolCallRecord
+from .models import (
+    Correction,
+    Decision,
+    DocumentFormat,
+    Flag,
+    HumanReview,
+    Invoice,
+    ToolCallRecord,
+)
 from .payments import PaymentResult
 from .reconciliation import reconcile
 from .registry import DuplicatePayment, normalize_invoice_identity
@@ -71,6 +80,9 @@ class PipelineState(TypedDict, total=False):
     tool_calls: list[dict[str, Any]]
     """Every read-only tool call the approval agent made, in order, with its arguments
     and result — the investigation trace ticket 08 asks for."""
+    human_review: dict[str, Any] | None
+    """The reviewer's outcome and reason for an escalated invoice (ticket 11), recorded
+    as its own audit-trail entry distinct from `decision`."""
 
 
 @dataclass(frozen=True)
@@ -84,6 +96,7 @@ class RunResult:
     corrections: list[Correction]
     extraction_method: str
     tool_calls: list[ToolCallRecord]
+    human_review: HumanReview | None
 
 
 def _ingest(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
@@ -162,13 +175,65 @@ def _approve(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
     if rule_decision.outcome == "rejected":
         # The ratchet forbids downgrading a rejection, so the agent call cannot change
         # anything here — it is not made at all, not made and then ignored.
-        return {"decision": rule_decision.model_dump(mode="json"), "tool_calls": []}
+        # "payment": None for the same reason _pay explains at its own return of it: a
+        # rejected or escalated outcome never reaches `_pay` to clear a prior run's
+        # stale success on this thread_id, so this node must clear it instead.
+        return {
+            "decision": rule_decision.model_dump(mode="json"),
+            "tool_calls": [],
+            "payment": None,
+        }
 
     decision, tool_calls = run_approval_agent(invoice, flags, usd_total, rule_decision, deps)
     return {
         "decision": decision.model_dump(mode="json"),
         "tool_calls": [tc.model_dump(mode="json") for tc in tool_calls],
+        "payment": None,
     }
+
+
+def _await_review(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
+    """Per ADR-0005: pause here on an escalated invoice, holding exactly the state a
+    reviewer is shown. `interrupt()` raises on first execution — LangGraph's checkpoint
+    of the state written by every prior node is what `resume_invoice` resumes from, so
+    there is nothing here to re-derive. On resume, `interrupt()` returns the reviewer's
+    payload instead of raising, and this node runs to completion."""
+    decision = Decision.model_validate(state["decision"])
+    invoice = Invoice.model_validate(state["invoice"])
+
+    payload = interrupt(
+        {
+            "document_name": state["document_name"],
+            "invoice_number": invoice.invoice_number,
+            "vendor": invoice.vendor.name,
+            "decision": decision.model_dump(mode="json"),
+        }
+    )
+    review = HumanReview.model_validate(payload)
+
+    reasoning = f"{decision.reasoning} Human review ({review.outcome}): {review.reason}"
+    return {
+        "decision": Decision(outcome=review.outcome, reasoning=reasoning).model_dump(
+            mode="json"
+        ),
+        "human_review": review.model_dump(mode="json"),
+    }
+
+
+def _route_after_approve(state: PipelineState) -> str:
+    decision = state.get("decision")
+    outcome = decision["outcome"] if decision else None
+    if outcome == "approved":
+        return "pay"
+    if outcome == "escalated":
+        return "await_review"
+    return END  # rejected, or (defensively) no decision at all
+
+
+def _route_after_review(state: PipelineState) -> str:
+    decision = state["decision"]
+    assert decision is not None  # _await_review always writes one before this routes
+    return "pay" if decision["outcome"] == "approved" else END
 
 
 def _pay(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
@@ -227,13 +292,17 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> Any:
     builder.add_node("reconcile", lambda state: _reconcile(state, deps=deps))
     builder.add_node("validate", lambda state: _validate(state, deps=deps))
     builder.add_node("approve", lambda state: _approve(state, deps=deps))
+    builder.add_node("await_review", lambda state: _await_review(state, deps=deps))
     builder.add_node("pay", lambda state: _pay(state, deps=deps))
 
     builder.add_edge(START, "ingest")
     builder.add_edge("ingest", "reconcile")
     builder.add_edge("reconcile", "validate")
     builder.add_edge("validate", "approve")
-    builder.add_edge("approve", "pay")
+    builder.add_conditional_edges(
+        "approve", _route_after_approve, {"pay": "pay", "await_review": "await_review", END: END}
+    )
+    builder.add_conditional_edges("await_review", _route_after_review, {"pay": "pay", END: END})
     builder.add_edge("pay", END)
 
     return builder.compile(checkpointer=checkpointer)
@@ -286,6 +355,44 @@ def run_invoice(
         }
         final = graph.invoke(initial, config=config)
 
+    return _to_run_result(final)
+
+
+class NotAwaitingReview(Exception):
+    """Raised by `resume_invoice` when the named run has no pending human review — it
+    was never escalated, has already been resumed, or the thread is unknown."""
+
+
+def resume_invoice(
+    document_name: str,
+    review: HumanReview,
+    deps: Deps,
+    *,
+    checkpointer: BaseCheckpointSaver[Any],
+) -> RunResult:
+    """Resume a run paused at `await_review` (ADR-0005) with a human's decision.
+
+    Takes the checkpointer directly rather than reconstructing one in-process: state is
+    read from it fresh, so this works identically whether the reviewer acts in the same
+    process that paused or a fresh one after a restart. `document_name` is the same
+    thread_id `run_invoice` used, since that is what a reviewer sees the escalation
+    filed under.
+    """
+    graph = build_graph(deps, checkpointer)
+    config: RunnableConfig = {"configurable": {"thread_id": document_name}}
+
+    snapshot = graph.get_state(config)
+    if not snapshot.interrupts:
+        raise NotAwaitingReview(
+            f"{document_name!r} has no pending human review to resume — it was never "
+            "escalated, or has already been resumed."
+        )
+
+    final = graph.invoke(Command(resume=review.model_dump(mode="json")), config=config)
+    return _to_run_result(final)
+
+
+def _to_run_result(final: dict[str, Any]) -> RunResult:
     return RunResult(
         invoice=Invoice.model_validate(final["invoice"]) if final.get("invoice") else None,
         flags=[Flag.model_validate(f) for f in final.get("flags", [])],
@@ -294,4 +401,7 @@ def run_invoice(
         corrections=[Correction.model_validate(c) for c in final.get("corrections", [])],
         extraction_method=final.get("extraction_method", "model"),
         tool_calls=[ToolCallRecord.model_validate(tc) for tc in final.get("tool_calls", [])],
+        human_review=HumanReview.model_validate(final["human_review"])
+        if final.get("human_review")
+        else None,
     )
