@@ -12,6 +12,8 @@ import os
 from dataclasses import dataclass
 from decimal import Decimal
 
+from dotenv import load_dotenv
+
 # Named here rather than inline so `.env.example` and this module cannot drift.
 ENV_API_KEY = "XAI_API_KEY"
 ENV_BASE_URL = "XAI_BASE_URL"
@@ -125,6 +127,11 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        # Loads .env into the process environment if one exists at or above the current
+        # directory; a no-op otherwise. `override=False` means a real environment
+        # variable a caller already set always wins over .env, matching how every other
+        # value here already treats explicit configuration as the higher authority.
+        load_dotenv(override=False)
         return cls(
             api_key=os.environ.get(ENV_API_KEY, "").strip() or None,
             base_url=_env(ENV_BASE_URL, DEFAULT_BASE_URL),

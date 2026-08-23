@@ -17,6 +17,7 @@ dependencies = [
     "uvicorn>=0.30",
     "aiofiles>=24.1",
     "python-multipart>=0.0.20",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

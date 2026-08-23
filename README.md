@@ -27,8 +27,9 @@ worked before installing: `which python` should point inside `.venv`, not a syst
 No API key needed. Without one the system uses a fake reasoning provider that replays
 recorded responses, so a clean clone runs the tests and the CLI as-is
 ([ADR-0001](docs/adr/0001-llm-is-the-only-network-dependency.md)). Copy `.env.example` to
-`.env` and set `XAI_API_KEY` to use Grok for real (then export it into your shell — nothing
-loads `.env` automatically).
+`.env` and set `XAI_API_KEY` to use Grok for real — `Settings.from_env()` loads `.env`
+automatically (`python-dotenv`), so no manual export step is needed; a real environment
+variable you've already set always takes precedence over what's in the file.
 
 ```bash
 pytest          # no network, no credentials — green on a clean clone
