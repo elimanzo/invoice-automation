@@ -1,0 +1,12 @@
+{
+  "invoice_number": "INV-9005",
+  "vendor": {"name": "Widgets Inc."},
+  "date": "2026-01-10",
+  "due_date": "2026-02-10",
+  "line_items": [
+    {"item": "WidgetA", "quantity": 1, "unit_price": "250.00"}
+  ],
+  "subtotal": "250.00",
+  "total": "250.00",
+  "currency": "USD"
+}

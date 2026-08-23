@@ -38,3 +38,16 @@ documented step, and one that requires a key.
 **Not done.** Production would add request tracing with per-call latency and token cost, and
 a scheduled live canary to detect provider drift. Out of scope here; named so the omission
 is a decision rather than an oversight.
+
+**Ticket 18 scoping note.** Cassettes cover `structured()` — extraction and the extraction
+critic — since that is what the "recorded" layer needs a real answer for. The approval
+agent's tool-calling conversation (`converse()`, ticket 08) is not cassette-replayed: it has
+no per-document key in its own signature (it only ever sees `messages`/`tools`), and every
+existing test since ticket 08 already relies on `FakeProvider.converse()`'s fixed "no further
+concerns" default rather than a scripted one. Recording real conversations would need a
+larger interface change for a stage that, by the caution ratchet (ADR-0004), can only ever
+tighten a decision the deterministic rules already reached — not silently changing it.
+Two silent-staleness checks close the loop this ADR leaves open: `scripts/check_cassettes_fresh.py`
+fingerprints every request the current code builds and compares it against the fingerprint
+recorded alongside each cassette, and `scripts/check_bundle_fresh.py` does the same for the
+committed dashboard bundle (ADR-0008) against `frontend/src`.

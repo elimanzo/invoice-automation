@@ -1,0 +1,14 @@
+{
+  "invoice_number": "INV-9001",
+  "vendor": {"name": "Widgets Inc."},
+  "date": "2026-01-15",
+  "due_date": "2026-02-15",
+  "line_items": [
+    {"item": "WidgetA", "quantity": 3, "unit_price": "400.00"}
+  ],
+  "subtotal": "1200.00",
+  "tax_amount": "0.00",
+  "total": "1200.00",
+  "currency": "USD",
+  "payment_terms": "Net 30"
+}

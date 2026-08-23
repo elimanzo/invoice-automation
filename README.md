@@ -1,36 +1,73 @@
 # Invoice Processing Automation
 
-A multi-agent system that takes a supplier invoice from a messy document to a paid (or
-rejected, or escalated) obligation — ingestion, validation against inventory, rule-plus-LLM
-approval, and payment.
+Acme Corp processes supplier invoices by hand: a clerk reads the document, checks items
+against inventory, chases a VP for approval by email, then pays. It costs **$2M/year**,
+carries a **30% error rate**, and takes **5 days** per invoice.
 
-> **Status: in progress.** Tickets 01–02 of 18 are complete — a document flows through all
-> four stages (ingest, validate, approve, pay) and the brief's command works end to end for
-> both an approved and an escalated invoice. The dashboard, reconciliation, and the richer
-> validation/approval rules are still to come, so this README gets replaced with the full
-> walkthrough and generated architecture diagram once the pipeline is feature-complete.
+This is a multi-agent system that runs that whole workflow instead — **ingestion**
+(document in, structured invoice out), **validation** (against the inventory catalogue),
+**approval** (deterministic rules plus an LLM that may only add caution, never overrule
+one), and **payment** (mocked, idempotent) — with every judgment call recorded as an
+auditable correction, flag, or decision rather than a silent guess. `CONTEXT.md` has the
+full vocabulary; the numbers above are what every feature here is measured against.
 
-## Quickstart
+## Install
 
 ```bash
 python -m venv .venv && .venv/Scripts/activate    # or: source .venv/bin/activate
 pip install -e ".[dev]"
+```
+
+No API key needed. Without one the system uses a fake reasoning provider that replays
+recorded responses, so a clean clone runs the tests and the CLI as-is
+([ADR-0001](docs/adr/0001-llm-is-the-only-network-dependency.md)). Copy `.env.example` to
+`.env` and set `XAI_API_KEY` to use Grok for real (then export it into your shell — nothing
+loads `.env` automatically).
+
+```bash
+pytest          # no network, no credentials — green on a clean clone
+mypy            # strict, src and tests
+```
+
+## Catalogue seed
+
+The inventory catalogue (SQLite: item, stock, expected price, known vendors) creates and
+seeds itself on first run. To reset it deliberately:
+
+```bash
+python main.py --seed-catalogue
+```
+
+## Single-invoice run
+
+```bash
 python main.py --invoice_path=data/invoices/invoice_1001.txt
 python main.py --invoice_path=data/invoices/invoice_1013.json   # aggregated stock exceeded: rejected
 ```
 
-No API key needed. Without one the system uses a fake reasoning provider that replays
-recorded responses, so a clean clone runs and the test suite passes as-is
-([ADR-0001](docs/adr/0001-llm-is-the-only-network-dependency.md)). Copy `.env.example` to
-`.env` and set `XAI_API_KEY` to use Grok for real.
-
-The inventory catalogue creates and seeds itself on first run. `python main.py
---seed-catalogue` resets it deliberately.
+An escalated invoice pauses rather than failing — the run reports the document name to
+resume with:
 
 ```bash
-pytest          # no network, no credentials
-mypy            # strict, src and tests
+python main.py --invoice_path=data/invoices_extra/invoice_9003_threshold_over.json   # over $10K: escalated
+python main.py --resume=invoice_9003_threshold_over.json --decision=approved --reason="VP confirmed by phone"
 ```
+
+## Batch run
+
+```bash
+python main.py --invoice_dir=data/invoices
+```
+
+One bad document never stops the rest; a summary is reported at the end (approved,
+rejected, escalated, failed counts). This is the same code path
+[the eval harness](docs/adr/0006-recorded-responses-for-tests.md) drives over the golden set.
+
+Without a key, the deterministic (JSON/CSV/XML) documents process normally; the text and
+PDF documents report `failed` — the fake provider only ships pre-recorded answers for the
+two documents the quickstart above uses ([ADR-0009](docs/adr/0009-deterministic-parsing-for-structured-formats.md)).
+`python scripts/record_cassettes.py` plus a real `XAI_API_KEY`, or `--provider grok`, gets
+every document a real answer.
 
 ## Dashboard
 
@@ -38,21 +75,33 @@ mypy            # strict, src and tests
 python -m invoice_automation.web    # http://127.0.0.1:8000
 ```
 
-No Node toolchain required — the React/Vite production bundle is committed under
-`src/invoice_automation/static/` and served as static files ([ADR-0008](docs/adr/0008-react-with-committed-bundle.md)).
-To rebuild it after changing the front end:
+Pipeline view, ledger, and the review queue for escalated invoices. No Node toolchain
+required to run it — the React/Vite production bundle is committed under
+`src/invoice_automation/static/` and served as static files
+([ADR-0008](docs/adr/0008-react-with-committed-bundle.md)). To rebuild it after changing
+the front end:
 
 ```bash
-cd frontend
-npm install
-npm run build    # type-checks, then writes ../src/invoice_automation/static
+python scripts/rebuild_dashboard.py    # npm install && npm run build, then stamps the bundle
 ```
 
-## The problem
+`scripts/check_bundle_fresh.py` (run in `pytest`) fails if the committed bundle and
+`frontend/src` disagree — a source change with no matching rebuild is caught rather than
+shipped silently stale.
 
-Acme Corp processes supplier invoices by hand: read the document, check items against
-inventory, chase a VP by email, pay. It costs **$2M/year**, carries a **30% error rate**, and
-takes **5 days** per invoice. Those three numbers are what this system is measured against.
+## Docker
+
+No local Python (or Node) installation needed at all:
+
+```bash
+docker build -t invoice-automation .
+docker run -p 8000:8000 invoice-automation                          # dashboard
+docker run invoice-automation python main.py --invoice_dir=data/invoices   # CLI, one-off
+```
+
+Runs with no API key (the fake provider) exactly like the local path above; pass
+`-e XAI_API_KEY=...` to use Grok for real. The documented local path (`pip install -e
+".[dev]"`, no Docker) still works unchanged — this is an alternative, not a replacement.
 
 ## Where things live
 
@@ -63,6 +112,7 @@ takes **5 days** per invoice. Those three numbers are what this system is measur
 | [CONTEXT.md](CONTEXT.md) | Domain glossary — the vocabulary this codebase speaks |
 | [docs/adr/](docs/adr/) | Architecture decisions, each with its cost stated |
 | [data/invoices/](data/invoices/) | The 16 provided sample invoices, untouched |
+| [data/invoices_extra/](data/invoices_extra/) | 6 authored fixtures reaching scenarios the provided data doesn't |
 
 ## Design in one table
 
@@ -78,3 +128,64 @@ takes **5 days** per invoice. Those three numbers are what this system is measur
 | Escalation | Graph interrupts, checkpoints, resumes on human action | Real human-in-the-loop, not a mock of one ([ADR-0005](docs/adr/0005-interrupt-and-resume-for-escalation.md)) |
 | Interface | CLI (as specified) plus a React dashboard served by FastAPI | Pipeline, review queue, ledger ([ADR-0008](docs/adr/0008-react-with-committed-bundle.md)) |
 | Tests | Unit, recorded cassettes, evals | Green on a clean clone with no API key ([ADR-0006](docs/adr/0006-recorded-responses-for-tests.md)) |
+
+## Architecture
+
+Generated from the live `StateGraph` (`graph.build_graph`) by
+`python scripts/generate_diagram.py` — this is the actual graph `run_invoice` executes,
+not a drawing of it, so it cannot drift from the code.
+
+<!-- ARCHITECTURE_DIAGRAM:START -->
+
+```mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	ingest(ingest)
+	reconcile(reconcile)
+	validate(validate)
+	approve(approve)
+	await_review(await_review)
+	pay(pay)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> ingest;
+	approve -.-> __end__;
+	approve -.-> await_review;
+	approve -.-> pay;
+	await_review -.-> __end__;
+	await_review -.-> pay;
+	ingest --> reconcile;
+	reconcile --> validate;
+	validate --> approve;
+	pay --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+```
+
+<!-- ARCHITECTURE_DIAGRAM:END -->
+
+## Tests, in three layers
+
+Per [ADR-0006](docs/adr/0006-recorded-responses-for-tests.md):
+
+1. **Unit** — parsers, validation, reconciliation, FX, no LLM: the bulk of the suite.
+2. **Recorded** — `tests/cassettes/`, real Grok request/response pairs captured once and
+   replayed offline (`tests/test_cassettes.py`). Recording is one documented command,
+   because it needs a key:
+   ```bash
+   python scripts/record_cassettes.py
+   ```
+   `FakeProvider` (no key needed, ever) and cassette replay share one implementation —
+   recording just points the same loader at `tests/cassettes/` instead of the package's
+   bundled sample responses. `scripts/check_cassettes_fresh.py` (also run in `pytest`)
+   catches a cassette recorded against a prompt or schema that has since changed.
+3. **Evals** — `python -m invoice_automation.evals` scores the golden set (16 provided
+   invoices plus the authored fixtures) on decision agreement and field accuracy, so a
+   prompt change reports "94% to 81%" instead of one opaque red test.
+
+A live smoke test runs only when `XAI_API_KEY` is set, and is skipped otherwise.
