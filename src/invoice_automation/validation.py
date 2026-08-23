@@ -126,7 +126,9 @@ def _check_line_items(invoice: Invoice, deps: Deps) -> list[Flag]:
         if normalized not in catalogue_match_by_normalized:
             catalogue_match_by_normalized[normalized] = match_item(deps.catalogue, line.item)
 
-        flags.extend(_check_price(line, catalogue_match_by_normalized[normalized]))
+        flags.extend(
+            _check_price(line, catalogue_match_by_normalized[normalized], invoice.currency)
+        )
 
     for normalized, total_quantity in quantities_by_normalized.items():
         display_name = display_name_by_normalized[normalized]
@@ -170,22 +172,36 @@ def _check_line_items(invoice: Invoice, deps: Deps) -> list[Flag]:
     return flags
 
 
-def _check_price(line: LineItem, catalogue_item: CatalogueItem | None) -> list[Flag]:
+def _check_price(
+    line: LineItem, catalogue_item: CatalogueItem | None, currency: str
+) -> list[Flag]:
     if catalogue_item is None or catalogue_item.expected_unit_price is None:
         return []
-    if line.unit_price is None or line.unit_price <= catalogue_item.expected_unit_price:
+    if line.unit_price is None:
+        return []
+
+    # The catalogue's expected price is USD; a non-USD line must be converted before
+    # comparing, or a foreign-currency invoice priced above catalogue expectation
+    # silently passes because its raw number happens to look smaller.
+    usd_unit_price = (line.unit_price * _fx_rate_for(currency)).quantize(_ROUNDING_TOLERANCE)
+    if usd_unit_price <= catalogue_item.expected_unit_price:
         return []
 
     documented = bool(line.note)
     code = "price_above_expected_documented" if documented else "price_above_expected"
     qualifier = f" ({line.note})" if documented else ", with no explanation given"
+    price_note = (
+        f"{line.unit_price} {currency} ({usd_unit_price} USD)"
+        if currency != "USD"
+        else str(line.unit_price)
+    )
     return [
         Flag(
             severity=FlagSeverity.SOFT,
             code=code,
             message=(
-                f"{line.item}: billed at {line.unit_price}, catalogue expects "
-                f"{catalogue_item.expected_unit_price}{qualifier}"
+                f"{line.item}: billed at {price_note}, catalogue expects "
+                f"{catalogue_item.expected_unit_price} USD{qualifier}"
             ),
         )
     ]
@@ -216,6 +232,19 @@ def _check_dates(invoice: Invoice, deps: Deps) -> list[Flag]:
     return flags
 
 
+def _fx_rate_for(currency: str) -> Decimal:
+    """The configured USD-per-unit rate for a currency, or a failure naming which one
+    is missing — shared by the total's own conversion and by the price check, so a
+    non-USD invoice's line prices are compared against the catalogue in the same units
+    its total is compared against the scrutiny threshold in."""
+    if currency == "USD":
+        return Decimal("1.00")
+    rate = FX_RATES_TO_USD.get(currency)
+    if rate is None:
+        raise UnknownCurrency(f"no FX rate configured for {currency!r}; add one to FX_RATES_TO_USD")
+    return rate
+
+
 def _convert_to_usd(
     invoice: Invoice,
 ) -> tuple[Decimal | None, list[Flag], list[Correction]]:
@@ -226,12 +255,7 @@ def _convert_to_usd(
     if invoice.currency == "USD":
         return total, [], []
 
-    rate = FX_RATES_TO_USD.get(invoice.currency)
-    if rate is None:
-        raise UnknownCurrency(
-            f"no FX rate configured for {invoice.currency!r}; add one to FX_RATES_TO_USD"
-        )
-
+    rate = _fx_rate_for(invoice.currency)
     converted = (total * rate).quantize(_ROUNDING_TOLERANCE)
     correction = Correction(
         field="usd_total",

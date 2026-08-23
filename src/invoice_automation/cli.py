@@ -16,7 +16,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .batch import BatchSummary, run_batch
 from .catalogue import seed_catalogue
-from .config import MissingApiKey, Settings
+from .config import MissingApiKey, Settings, UnknownCurrency
 from .deps import build_deps
 from .documents import (
     UndecodableDocument,
@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         checkpointer = SqliteSaver(conn)
         try:
             result = run_invoice(document, deps, checkpointer=checkpointer)
-        except (ExtractionFailed, LookupError, ProviderUnavailable) as exc:
+        except (ExtractionFailed, LookupError, ProviderUnavailable, UnknownCurrency) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 

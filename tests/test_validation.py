@@ -429,3 +429,57 @@ def test_a_single_moderate_soft_flag_does_not_cross_the_escalation_threshold(
     flags = validate_invoice(invoice, deps).flags
 
     assert compute_risk_score(flags) < RISK_ESCALATION_THRESHOLD
+
+
+# ---------------------------------------------------------------------------
+# Price checking must compare in one currency (found by code-review on PR #3)
+# ---------------------------------------------------------------------------
+
+
+def test_a_foreign_price_below_the_usd_catalogue_number_but_above_it_once_converted_is_flagged(
+    deps: Deps,
+) -> None:
+    """invoice_1014.xml: WidgetB billed at 475.00 EUR. 475 <= 500 (the catalogue's USD
+    price) looks fine read naively, but 475 EUR converts to 513 USD at the configured
+    1.08 rate — genuinely above catalogue. Comparing the raw numbers across currencies
+    let a real overpriced line item through undetected."""
+    invoice = Invoice(
+        vendor=Vendor(name="X"),
+        currency="EUR",
+        line_items=[LineItem(item="WidgetB", quantity=1, unit_price=Decimal("475.00"))],
+    )
+
+    flags = validate_invoice(invoice, deps).flags
+
+    priced = [f for f in flags if f.code == "price_above_expected"]
+    assert len(priced) == 1
+    assert "513.00 USD" in priced[0].message
+
+
+def test_a_foreign_price_genuinely_under_the_converted_catalogue_price_is_not_flagged(
+    deps: Deps,
+) -> None:
+    invoice = Invoice(
+        vendor=Vendor(name="X"),
+        currency="EUR",
+        line_items=[LineItem(item="WidgetB", quantity=1, unit_price=Decimal("400.00"))],
+    )
+
+    flags = validate_invoice(invoice, deps).flags
+
+    assert not any(f.code.startswith("price_above_expected") for f in flags)
+
+
+def test_an_unconfigured_currency_in_a_line_price_still_raises_cleanly(deps: Deps) -> None:
+    import pytest
+
+    from invoice_automation.config import UnknownCurrency
+
+    invoice = Invoice(
+        vendor=Vendor(name="X"),
+        currency="XYZ",
+        line_items=[LineItem(item="WidgetA", quantity=1, unit_price=Decimal("999.00"))],
+    )
+
+    with pytest.raises(UnknownCurrency):
+        validate_invoice(invoice, deps)

@@ -129,3 +129,26 @@ def test_a_nonexistent_invoice_dir_is_a_clean_error(
 
     assert exit_code == 1
     assert "no such directory" in capsys.readouterr().err
+
+
+def test_an_unconfigured_currency_is_a_clean_error_not_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Found by code-review on PR #3: UnknownCurrency propagated past every except
+    clause in the single-invoice path and crashed the CLI with a raw traceback."""
+    import invoice_automation.providers as providers_module
+
+    responses_dir = tmp_path / "responses"
+    responses_dir.mkdir()
+    document_path = tmp_path / "invoice_foreign.txt"
+    document_path.write_text("irrelevant to the fake", encoding="utf-8")
+    (responses_dir / "invoice_foreign.json").write_text(
+        '{"vendor": {"name": "X"}, "currency": "XYZ", "total": "100.00", "line_items": []}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(providers_module, "SAMPLE_RESPONSES_DIR", responses_dir)
+
+    exit_code = main([f"--invoice_path={document_path}"])
+
+    assert exit_code == 1
+    assert "XYZ" in capsys.readouterr().err
