@@ -4,9 +4,33 @@ A multi-agent system that takes a supplier invoice from a messy document to a pa
 rejected, or escalated) obligation — ingestion, validation against inventory, rule-plus-LLM
 approval, and payment.
 
-> **Status: design complete, implementation in progress.** This README is a placeholder and
-> gets replaced with setup instructions, the generated architecture diagram, and a demo
-> walkthrough once the system runs.
+> **Status: in progress.** Tickets 01–02 of 18 are complete — a document flows through all
+> four stages (ingest, validate, approve, pay) and the brief's command works end to end for
+> both an approved and an escalated invoice. The dashboard, reconciliation, and the richer
+> validation/approval rules are still to come, so this README gets replaced with the full
+> walkthrough and generated architecture diagram once the pipeline is feature-complete.
+
+## Quickstart
+
+```bash
+python -m venv .venv && .venv/Scripts/activate    # or: source .venv/bin/activate
+pip install -e ".[dev]"
+python main.py --invoice_path=data/invoices/invoice_1001.txt
+python main.py --invoice_path=data/invoices/invoice_1013.json   # over $10K: escalated
+```
+
+No API key needed. Without one the system uses a fake reasoning provider that replays
+recorded responses, so a clean clone runs and the test suite passes as-is
+([ADR-0001](docs/adr/0001-llm-is-the-only-network-dependency.md)). Copy `.env.example` to
+`.env` and set `XAI_API_KEY` to use Grok for real.
+
+The inventory catalogue creates and seeds itself on first run. `python main.py
+--seed-catalogue` resets it deliberately.
+
+```bash
+pytest          # 39 tests, no network, no credentials
+mypy            # strict, src and tests
+```
 
 ## The problem
 
