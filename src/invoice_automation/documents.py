@@ -27,6 +27,10 @@ _SUFFIX_FORMATS = {
     ".pdf": DocumentFormat.PDF,
 }
 
+# Public: callers outside this module (the upload endpoint) that need to validate a file
+# extension before a `Document` exists yet to sniff a format from.
+SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(_SUFFIX_FORMATS)
+
 # Tried in order. UTF-8 first because it is correct for everything the sample data
 # contains; cp1252 second because ERP exports commonly use it and its bytes are
 # indistinguishable from latin-1 for the punctuation that actually appears in invoices.

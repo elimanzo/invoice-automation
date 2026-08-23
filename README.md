@@ -14,15 +14,22 @@ full vocabulary; the numbers above are what every feature here is measured again
 ## Install
 
 ```bash
-python -m venv .venv && .venv/Scripts/activate    # or: source .venv/bin/activate
+python -m venv .venv
+source .venv/Scripts/activate    # Windows (Git Bash); macOS/Linux: source .venv/bin/activate
+# PowerShell: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 ```
+
+Activation only takes effect if you `source` it (or `.` it) — running the script directly
+spawns a subshell that exits immediately and changes nothing in your current one. Confirm it
+worked before installing: `which python` should point inside `.venv`, not a system Python.
 
 No API key needed. Without one the system uses a fake reasoning provider that replays
 recorded responses, so a clean clone runs the tests and the CLI as-is
 ([ADR-0001](docs/adr/0001-llm-is-the-only-network-dependency.md)). Copy `.env.example` to
-`.env` and set `XAI_API_KEY` to use Grok for real (then export it into your shell — nothing
-loads `.env` automatically).
+`.env` and set `XAI_API_KEY` to use Grok for real — `Settings.from_env()` loads `.env`
+automatically (`python-dotenv`), so no manual export step is needed; a real environment
+variable you've already set always takes precedence over what's in the file.
 
 ```bash
 pytest          # no network, no credentials — green on a clean clone
@@ -75,7 +82,9 @@ every document a real answer.
 python -m invoice_automation.web    # http://127.0.0.1:8000
 ```
 
-Pipeline view, ledger, and the review queue for escalated invoices. No Node toolchain
+Pipeline view (with a click-to-upload control — pick one or several files from
+`data/demo_uploads/` to see it work immediately, or any of `data/invoices/`), ledger, and
+the review queue for escalated invoices. No Node toolchain
 required to run it — the React/Vite production bundle is committed under
 `src/invoice_automation/static/` and served as static files
 ([ADR-0008](docs/adr/0008-react-with-committed-bundle.md)). To rebuild it after changing
@@ -128,6 +137,7 @@ makes `git commit` (no `-m`) open with the format and a reminder to write *why*,
 | [docs/adr/](docs/adr/) | Architecture decisions, each with its cost stated |
 | [data/invoices/](data/invoices/) | The 16 provided sample invoices, untouched |
 | [data/invoices_extra/](data/invoices_extra/) | 6 authored fixtures reaching scenarios the provided data doesn't |
+| [data/demo_uploads/](data/demo_uploads/) | 4 files for trying the dashboard's upload control — one clean approve, one stock mismatch, one over-threshold escalation, one fatal rejection |
 
 ## Design in one table
 

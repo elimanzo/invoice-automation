@@ -158,6 +158,30 @@ export function getImpact(): Promise<ImpactSummary> {
   return getJson<ImpactSummary>("/impact");
 }
 
+export type UploadRejection = {
+  filename: string;
+  reason: string;
+};
+
+export type UploadResponse = {
+  accepted: string[];
+  rejected: UploadRejection[];
+};
+
+// Ticket 20: a clerk-facing alternative to path-based /runs. Files an upload rejects
+// (wrong extension, too large) come back named in the same response, never silently.
+export async function uploadDocuments(files: File[]): Promise<UploadResponse> {
+  const body = new FormData();
+  for (const file of files) {
+    body.append("files", file);
+  }
+  const response = await fetch("/uploads", { method: "POST", body });
+  if (!response.ok) {
+    throw new Error(`upload responded ${response.status}`);
+  }
+  return (await response.json()) as UploadResponse;
+}
+
 export function submitReview(
   documentName: string,
   outcome: "approved" | "rejected",

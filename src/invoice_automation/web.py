@@ -38,7 +38,8 @@ def build_app() -> FastAPI:
     conn = sqlite3.connect(checkpoint_path, check_same_thread=False)
     checkpointer = SqliteSaver(conn)
 
-    app = create_app(deps, checkpointer)
+    uploads_dir = Path(settings.data_dir) / "uploads"
+    app = create_app(deps, checkpointer, uploads_dir)
     # Mounted last: routes `create_app` already registered (/runs, /events, ...) are
     # matched first, so the SPA fallback below only ever catches dashboard paths.
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="dashboard")

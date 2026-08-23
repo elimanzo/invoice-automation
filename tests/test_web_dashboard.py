@@ -48,8 +48,8 @@ def checkpointer() -> Any:
 
 
 @pytest.fixture
-def client(deps: Deps, checkpointer: Any) -> TestClient:
-    app = create_app(deps, checkpointer)
+def client(deps: Deps, checkpointer: Any, tmp_path: Path) -> TestClient:
+    app = create_app(deps, checkpointer, tmp_path / "uploads")
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="dashboard")
     return TestClient(app)
 

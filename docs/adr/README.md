@@ -15,6 +15,7 @@ made, and what it costs. Superseded decisions get marked, not deleted.
 | [0008](0008-react-with-committed-bundle.md) | React front end with a committed bundle |
 | [0009](0009-deterministic-parsing-for-structured-formats.md) | Structured formats are parsed deterministically, not by the model |
 | [0010](0010-redundant-critics-considered-deferred.md) | Redundant independent critics for escalation (considered, deferred) |
+| [0011](0011-uploaded-originals-retained-permanently.md) | Uploaded invoice originals are retained permanently |
 
 Domain vocabulary lives in [CONTEXT.md](../../CONTEXT.md). The original brief is
 [REQUIREMENTS.md](../../REQUIREMENTS.md).

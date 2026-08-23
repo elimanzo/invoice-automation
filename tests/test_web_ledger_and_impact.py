@@ -51,8 +51,8 @@ def checkpointer() -> Any:
 
 
 @pytest.fixture
-def client(deps: Deps, checkpointer: Any) -> TestClient:
-    app = create_app(deps, checkpointer)
+def client(deps: Deps, checkpointer: Any, tmp_path: Path) -> TestClient:
+    app = create_app(deps, checkpointer, tmp_path / "uploads")
     return TestClient(app)
 
 
@@ -83,7 +83,7 @@ def _stock_exceeding_client(
         registry=deps.registry,
         tracer=deps.tracer,
     )
-    app = create_app(scoped, checkpointer)
+    app = create_app(scoped, checkpointer, tmp_path / "uploads")
     return TestClient(app), document_path
 
 
@@ -145,7 +145,7 @@ def test_run_detail_includes_the_source_document_alongside_the_extraction(
 def test_impact_reports_business_metrics_from_config(
     deps: Deps, checkpointer: Any, tmp_path: Path
 ) -> None:
-    app = create_app(deps, checkpointer)
+    app = create_app(deps, checkpointer, tmp_path / "uploads")
     client = TestClient(app)
     client.post("/runs", json={"document_path": str(CLEAN_INVOICE)})
 

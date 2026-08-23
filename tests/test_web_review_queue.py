@@ -52,8 +52,8 @@ def checkpointer() -> Any:
 
 
 @pytest.fixture
-def client(deps: Deps, checkpointer: Any) -> TestClient:
-    app = create_app(deps, checkpointer)
+def client(deps: Deps, checkpointer: Any, tmp_path: Path) -> TestClient:
+    app = create_app(deps, checkpointer, tmp_path / "uploads")
     return TestClient(app)
 
 
@@ -92,7 +92,7 @@ def test_run_detail_risk_score_matches_the_deterministic_computation(
         clock=deps.clock,
         registry=deps.registry,
     )
-    client = TestClient(create_app(scoped, checkpointer))
+    client = TestClient(create_app(scoped, checkpointer, tmp_path / "uploads"))
 
     client.post("/runs", json={"document_path": str(document_path)})
 
