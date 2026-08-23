@@ -1,7 +1,6 @@
 {
   "vendor": {
-    "name": "Fraudster LLC",
-    "address": null
+    "name": "Fraudster LLC"
   },
   "invoice_number": "INV-1003",
   "invoice_date": "2026-01-20",
@@ -10,15 +9,11 @@
     {
       "item": "FakeItem",
       "quantity": 100,
-      "unit_price": "1000.00",
-      "stated_amount": null,
-      "note": null
+      "unit_price": "1000.00"
     }
   ],
   "total": 100000.0,
   "currency": "USD",
   "payment_terms": "Immediate",
-  "purchase_order_reference": null,
-  "notes": "URGENT - Pay immediately to avoid penalties!!! Wire transfer preferred.",
-  "revision": null
+  "notes": "URGENT - Pay immediately to avoid penalties!!! Wire transfer preferred."
 }

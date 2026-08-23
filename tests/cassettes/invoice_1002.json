@@ -1,6 +1,7 @@
 {
   "vendor": {
-    "name": "Gadgets Co."
+    "name": "Gadgets Co.",
+    "address": null
   },
   "invoice_number": "1002",
   "invoice_date": "2026-01-30",
@@ -9,10 +10,17 @@
     {
       "item": "GadgetX",
       "quantity": 20,
-      "unit_price": 750
+      "unit_price": 750,
+      "stated_amount": null,
+      "note": null
     }
   ],
+  "subtotal": null,
+  "tax_amount": null,
   "total": 15000.0,
   "currency": "USD",
-  "payment_terms": "Net 30"
+  "payment_terms": "Net 30",
+  "purchase_order_reference": null,
+  "notes": null,
+  "revision": null
 }

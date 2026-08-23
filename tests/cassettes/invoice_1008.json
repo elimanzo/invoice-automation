@@ -9,12 +9,12 @@
     {
       "item": "SuperGizmo",
       "quantity": 12,
-      "unit_price": "400.00"
+      "unit_price": 400.0
     },
     {
       "item": "MegaSprocket",
       "quantity": 6,
-      "unit_price": "850.00"
+      "unit_price": 850.0
     }
   ],
   "total": 9900.0,
