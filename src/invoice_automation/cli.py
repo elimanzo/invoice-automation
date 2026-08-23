@@ -28,6 +28,7 @@ from .extraction import ExtractionFailed
 from .graph import RunResult, run_invoice
 from .models import Decision, Flag, Invoice
 from .payments import PaymentResult
+from .reconciliation import RevisionAfterPayment
 from .providers import ProviderUnavailable
 
 CHECKPOINT_FILENAME = "checkpoints.db"
@@ -139,7 +140,13 @@ def main(argv: list[str] | None = None) -> int:
         checkpointer = SqliteSaver(conn)
         try:
             result = run_invoice(document, deps, checkpointer=checkpointer)
-        except (ExtractionFailed, LookupError, ProviderUnavailable, UnknownCurrency) as exc:
+        except (
+            ExtractionFailed,
+            LookupError,
+            ProviderUnavailable,
+            UnknownCurrency,
+            RevisionAfterPayment,
+        ) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 

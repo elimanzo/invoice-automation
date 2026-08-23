@@ -1,23 +1,27 @@
-"""The registry: what has already been paid.
+"""The registry: what has already been paid, and what has already been seen.
 
 An invoice is one obligation and may be paid at most once, however many documents carry
 it. The registry is what makes that enforceable — and enforced at the storage layer, by
 a uniqueness constraint on invoice identity, rather than by application code remembering
 to check.
 
-Reconciliation of conflicting documents and superseding revisions is a later ticket.
-What exists here is the identity and payment record those depend on.
+Payments and seen invoices are two different things kept here on purpose. A payment
+exists only after an invoice is approved and paid. A seen-invoice snapshot exists the
+moment any document for an identity is first extracted — reconciliation (ticket 10) must
+catch a duplicate arriving for an invoice that was rejected or escalated, not paid, just
+as much as one that was.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 _INVOICE_NUMBER = re.compile(r"(?:INV[-\s#]*)?(\d+)", re.IGNORECASE)
 
@@ -48,6 +52,21 @@ class PaymentRecord:
     amount: Decimal
 
 
+@dataclass(frozen=True)
+class SeenInvoice:
+    """A snapshot of the most recently reconciled invoice for one identity.
+
+    Not a payment record and not the raw document — the JSON-shaped `Invoice` that
+    resulted from reconciling every document seen for this identity so far, which is
+    exactly what the next document arriving for the same identity needs to compare
+    itself against.
+    """
+
+    identity: str
+    document_name: str
+    invoice: dict[str, Any]
+
+
 @runtime_checkable
 class Registry(Protocol):
     def payment_recorded(self, invoice_number: str) -> bool:
@@ -64,6 +83,16 @@ class Registry(Protocol):
         through it."""
         ...
 
+    def get_seen_invoice(self, identity: str) -> SeenInvoice | None:
+        """What reconciliation last recorded for this identity, if anything."""
+        ...
+
+    def record_seen_invoice(self, identity: str, document_name: str, invoice: dict[str, Any]) -> None:
+        """Replace what's recorded for this identity — reconciliation calls this after
+        deciding what the current true state for the identity is (the first document
+        seen, or a merge, or a revision superseding what came before)."""
+        ...
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS payments (
@@ -71,14 +100,20 @@ CREATE TABLE IF NOT EXISTS payments (
     vendor         TEXT NOT NULL,
     amount         TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS seen_invoices (
+    identity      TEXT PRIMARY KEY,
+    document_name TEXT NOT NULL,
+    invoice_json  TEXT NOT NULL
+);
 """
 
 
 class SqliteRegistry:
     """SQLite-backed registry.
 
-    `invoice_number` is the primary key, so a duplicate payment is rejected by the
-    database itself. A code path that forgot to check first still cannot pay twice.
+    `invoice_number` is the primary key on payments, so a duplicate payment is rejected
+    by the database itself. A code path that forgot to check first still cannot pay
+    twice.
     """
 
     def __init__(self, path: Path) -> None:
@@ -112,3 +147,28 @@ class SqliteRegistry:
                 "SELECT invoice_number, vendor, amount FROM payments ORDER BY invoice_number"
             ).fetchall()
         return [PaymentRecord(number, vendor, Decimal(amount)) for number, vendor, amount in rows]
+
+    def get_seen_invoice(self, identity: str) -> SeenInvoice | None:
+        with closing(sqlite3.connect(self._path)) as conn:
+            row = conn.execute(
+                "SELECT identity, document_name, invoice_json FROM seen_invoices WHERE identity = ?",
+                (identity,),
+            ).fetchone()
+        if row is None:
+            return None
+        identity_value, document_name, invoice_json = row
+        return SeenInvoice(
+            identity=identity_value, document_name=document_name, invoice=json.loads(invoice_json)
+        )
+
+    def record_seen_invoice(
+        self, identity: str, document_name: str, invoice: dict[str, Any]
+    ) -> None:
+        with closing(sqlite3.connect(self._path)) as conn, conn:
+            conn.execute(
+                "INSERT INTO seen_invoices (identity, document_name, invoice_json) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(identity) DO UPDATE SET "
+                "document_name = excluded.document_name, invoice_json = excluded.invoice_json",
+                (identity, document_name, json.dumps(invoice)),
+            )

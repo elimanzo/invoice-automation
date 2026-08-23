@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from invoice_automation.catalogue import CatalogueItem
 from invoice_automation.deps import Deps
@@ -17,7 +18,7 @@ from invoice_automation.documents import load_document
 from invoice_automation.extraction import extract_invoice
 from invoice_automation.payments import PaymentResult
 from invoice_automation.providers import FakeProvider
-from invoice_automation.registry import PaymentRecord
+from invoice_automation.registry import PaymentRecord, SeenInvoice
 
 
 class InMemoryCatalogue:
@@ -53,6 +54,12 @@ class NullRegistry:
 
     def payments(self) -> list[PaymentRecord]:
         return []
+
+    def get_seen_invoice(self, identity: str) -> SeenInvoice | None:
+        return None
+
+    def record_seen_invoice(self, identity: str, document_name: str, invoice: dict[str, Any]) -> None:
+        pass
 
 
 class FrozenClock:

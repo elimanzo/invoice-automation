@@ -38,6 +38,7 @@ from .documents import Document
 from .extraction import extract_invoice
 from .models import Correction, Decision, DocumentFormat, Flag, Invoice, ToolCallRecord
 from .payments import PaymentResult
+from .reconciliation import reconcile
 from .registry import DuplicatePayment, normalize_invoice_identity
 from .structured_parsing import StructuredParseFailed, parse_structured
 from .validation import validate_invoice
@@ -111,6 +112,26 @@ def _ingest(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
         # validate appends to it rather than replacing it, so neither stage's findings
         # overwrite the other's.
         "flags": [f.model_dump(mode="json") for f in result.flags],
+    }
+
+
+def _reconcile(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
+    """Compare this document's extraction against whatever was already seen for the
+    same invoice identity (reconciliation.py), before validation ever runs — a
+    duplicate or revision changes what "the invoice" even is, which validation's
+    dollar and stock checks must see, not just the flags they produce."""
+    invoice = Invoice.model_validate(state["invoice"])
+    existing_flags = [Flag.model_validate(f) for f in state.get("flags", [])]
+    existing_corrections = [Correction.model_validate(c) for c in state.get("corrections", [])]
+
+    result = reconcile(invoice, state["document_name"], deps)
+
+    return {
+        "invoice": result.invoice.model_dump(mode="json"),
+        "flags": [f.model_dump(mode="json") for f in existing_flags + result.flags],
+        "corrections": [
+            c.model_dump(mode="json") for c in existing_corrections + result.corrections
+        ],
     }
 
 
@@ -203,12 +224,14 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any]) -> Any:
     signature stays `(state) -> dict` — what LangGraph expects — without a global."""
     builder = StateGraph(PipelineState)
     builder.add_node("ingest", lambda state: _ingest(state, deps=deps))
+    builder.add_node("reconcile", lambda state: _reconcile(state, deps=deps))
     builder.add_node("validate", lambda state: _validate(state, deps=deps))
     builder.add_node("approve", lambda state: _approve(state, deps=deps))
     builder.add_node("pay", lambda state: _pay(state, deps=deps))
 
     builder.add_edge(START, "ingest")
-    builder.add_edge("ingest", "validate")
+    builder.add_edge("ingest", "reconcile")
+    builder.add_edge("reconcile", "validate")
     builder.add_edge("validate", "approve")
     builder.add_edge("approve", "pay")
     builder.add_edge("pay", END)

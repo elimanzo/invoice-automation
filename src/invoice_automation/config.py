@@ -47,6 +47,11 @@ FX_RATES_TO_USD: dict[str, Decimal] = {
     "EUR": Decimal("1.08"),
 }
 
+# Crossed by compounding soft flags, not by any single one alone — this is what makes
+# INV-1008 (unknown vendor, two uncatalogued items, $9,900 — just under the dollar
+# threshold) escalate on judgement rather than sail through on a technicality.
+RISK_ESCALATION_THRESHOLD = 5
+
 # What a soft flag costs toward the risk score, by flag code. A flag with no entry here
 # contributes nothing — fatal flags reject outright before risk is ever computed, and
 # info flags are visibility only.
@@ -59,12 +64,12 @@ RISK_WEIGHTS: dict[str, int] = {
     "non_usd_currency": 1,
     "due_date_before_invoice_date": 2,
     "due_date_in_the_past": 2,
+    # Two documents for the same invoice disagree, and reconciliation refuses to guess
+    # which is right (reconciliation.py). This alone must force escalation — set equal
+    # to the threshold itself so it always crosses it, referencing the constant rather
+    # than a hardcoded number that could silently drift out of sync with it.
+    "duplicate_contradiction": RISK_ESCALATION_THRESHOLD,
 }
-
-# Crossed by compounding soft flags, not by any single one alone — this is what makes
-# INV-1008 (unknown vendor, two uncatalogued items, $9,900 — just under the dollar
-# threshold) escalate on judgement rather than sail through on a technicality.
-RISK_ESCALATION_THRESHOLD = 5
 
 # The approval agent's investigation is bounded: this many tool calls before it must
 # conclude. Exhausting the bound without a conclusion fails closed — the deterministic
