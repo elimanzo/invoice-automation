@@ -9,9 +9,11 @@ Processing each document as if it were the first time overpays.
 Four outcomes, in the order they're checked:
 
 1. **Revision** — the document declares itself a replacement (`Invoice.revision` is
-   set). It supersedes what came before. If the original was already paid, that's an
-   exception, not a flag — code cannot decide on its own whether to claw back a payment
-   or issue a supplement; a human must.
+   set) of something other than what the registry already holds. It supersedes what came
+   before. If the original was already paid, that's an exception, not a flag — code
+   cannot decide on its own whether to claw back a payment or issue a supplement; a human
+   must. A document repeating a revision label already on record is *not* this case: it
+   is the same claim twice, handled as a duplicate below.
 2. **Identical** — every field the two documents both state agrees, once whitespace is
    normalised. The second document is redundant; an info flag notes it, nothing merges.
 3. **Contradiction** — the two documents disagree on a field they both state. Never
@@ -88,7 +90,12 @@ def reconcile(invoice: Invoice, document_name: str, deps: Deps) -> Reconciliatio
 
     previous = Invoice.model_validate(seen.invoice)
 
-    if invoice.revision is not None:
+    # A revision *label the registry has already seen* is not a new claim — it is the
+    # same claim restated, which is what a duplicated file is. Only a revision that
+    # supersedes something different takes the revision path; otherwise this falls
+    # through to the ordinary duplicate handling below, which drops an identical copy
+    # instead of treating it as a second revision arriving after payment.
+    if invoice.revision is not None and invoice.revision != previous.revision:
         return _reconcile_revision(invoice, previous, identity, document_name, deps)
 
     conflicts = _conflicting_fields(invoice, previous)

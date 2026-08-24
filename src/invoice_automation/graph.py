@@ -52,13 +52,9 @@ from .payments import PaymentResult
 from .providers import wrap_provider
 from .reconciliation import reconcile
 from .registry import DuplicatePayment, normalize_invoice_identity
-from .structured_parsing import StructuredParseFailed, parse_structured
+from .structured_parsing import STRUCTURED_FORMATS, StructuredParseFailed, parse_structured
 from .tracing import traced_stage
 from .validation import validate_invoice
-
-_STRUCTURED_FORMATS = frozenset(
-    {DocumentFormat.JSON, DocumentFormat.CSV, DocumentFormat.XML}
-)
 
 
 class PipelineState(TypedDict, total=False):
@@ -117,7 +113,7 @@ def _ingest(state: PipelineState, *, deps: Deps) -> dict[str, Any]:
         raw_text=state["raw_text"],
     )
 
-    if document.format in _STRUCTURED_FORMATS:
+    if document.format in STRUCTURED_FORMATS:
         try:
             invoice = parse_structured(document)
             return {

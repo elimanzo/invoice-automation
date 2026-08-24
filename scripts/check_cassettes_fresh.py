@@ -12,6 +12,11 @@ to the question the code now asks.
 Exits non-zero and lists the stale documents if any fingerprint has drifted, or if a
 cassette exists with no fingerprint recorded for it at all (an older recording run, or
 a hand-edited file).
+
+Also checks the reverse direction of the same staleness problem: the bundled copies in
+`src/invoice_automation/sample_responses/` are what a keyless clone replays, and
+`record_cassettes.py` writes only `tests/cassettes/`, so a re-record would otherwise
+leave them silently behind.
 """
 
 from __future__ import annotations
@@ -35,6 +40,13 @@ from invoice_automation.registry import SqliteRegistry  # noqa: E402
 
 CASSETTES_DIR = REPO_ROOT / "tests" / "cassettes"
 MANIFEST_PATH = CASSETTES_DIR / "_manifest.json"
+BUNDLED_DIR = REPO_ROOT / "src" / "invoice_automation" / "sample_responses"
+
+# Bundled fixtures that are hand-written rather than copied from a cassette, and so are
+# *expected* to differ from the same-named cassette. Unit tests assert on their exact
+# contents (tests/test_graph.py, tests/test_structured_pipeline.py), which is why they
+# were never replaced when the rest of the bundled set became real recordings.
+HAND_WRITTEN = frozenset({"invoice_1001.json", "invoice_1013.json"})
 
 
 class _FingerprintingFakeProvider(FakeProvider):
@@ -51,6 +63,30 @@ class _FingerprintingFakeProvider(FakeProvider):
             key = f"{key}.critique"
         self.current_fingerprints[key] = request_fingerprint(call)
         return super().structured(call)
+
+
+def _bundled_drift() -> list[str]:
+    """Bundled responses whose content no longer matches the cassette they were copied
+    from. `record_cassettes.py` writes only `tests/cassettes/`, so a re-record leaves the
+    bundled set — the one a keyless clone actually replays — silently behind. Compares
+    only files that exist in both sets and are not `HAND_WRITTEN`; a cassette with no
+    bundled twin is simply a document keyless runs cannot reach.
+    """
+    if not BUNDLED_DIR.is_dir():
+        return []
+
+    drifted: list[str] = []
+    for bundled in sorted(BUNDLED_DIR.glob("*.json")):
+        if bundled.name in HAND_WRITTEN:
+            continue
+        cassette = CASSETTES_DIR / bundled.name
+        if not cassette.is_file():
+            continue
+        if json.loads(bundled.read_text(encoding="utf-8")) != json.loads(
+            cassette.read_text(encoding="utf-8")
+        ):
+            drifted.append(bundled.name)
+    return drifted
 
 
 def main() -> int:
@@ -78,6 +114,21 @@ def main() -> int:
             registry=SqliteRegistry(tmp_path / "registry.db"),
         )
         run_eval(deps)
+
+    drifted = _bundled_drift()
+    if drifted:
+        print(
+            "Bundled sample_responses/ no longer match tests/cassettes/:", file=sys.stderr
+        )
+        for key in drifted:
+            print(f"  {key}", file=sys.stderr)
+        print(
+            "\nThe bundled copies are what a keyless clone replays, and "
+            "record_cassettes.py writes only tests/cassettes/ — copy the re-recorded "
+            "file(s) across so the two stay one set of answers.",
+            file=sys.stderr,
+        )
+        return 1
 
     stale = sorted(
         key

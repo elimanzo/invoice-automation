@@ -79,6 +79,14 @@ so the whole provided corpus reaches a decision on a clean clone. `python
 scripts/record_cassettes.py` plus a real `XAI_API_KEY`, or `--provider grok`, re-records
 against the live model instead.
 
+One honest limitation of that keyless path: recordings are keyed on a document's filename
+*stem*, so INV-1011's and INV-1012's PDF and text twins replay the same answer. Keyless,
+those pairs therefore demonstrate reconciliation's *identical duplicate* branch (paid once,
+info flag) rather than the enrichment and contradiction branches they exist to exercise —
+where the text twin carries fields the PDF's layout dropped. Those branches are covered by
+`tests/test_reconciliation.py` against scripted extractions, and a run with a real key
+shows them on the sample data itself.
+
 ## Dashboard
 
 ```bash

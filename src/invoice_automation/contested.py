@@ -33,13 +33,9 @@ from pathlib import Path
 from typing import Iterable
 
 from .documents import load_document
-from .models import DocumentFormat, Flag, FlagSeverity
+from .models import Flag, FlagSeverity
 from .registry import normalize_invoice_identity
-from .structured_parsing import parse_structured
-
-_STRUCTURED_FORMATS = frozenset(
-    {DocumentFormat.JSON, DocumentFormat.CSV, DocumentFormat.XML}
-)
+from .structured_parsing import STRUCTURED_FORMATS, parse_structured
 
 CONTESTED_FLAG_CODE = "contested_submission"
 
@@ -48,9 +44,18 @@ def contested_documents(paths: Iterable[Path]) -> dict[str, str]:
     """Document name -> why it is contested, for every document in a collision group.
 
     A group is contested when two or more documents claim the same invoice identity and
-    at least one of them declares itself a revision. Two documents for the same identity
-    with no revision between them are *not* contested: that is an ordinary duplicate or
-    enrichment, and reconciliation resolves it correctly whichever arrives first.
+    disagree about which of them is current — a revision alongside a non-revision, or two
+    different revision labels. Two documents for the same identity making the same claim
+    are *not* contested: that is an ordinary duplicate or enrichment, and reconciliation
+    resolves it correctly whichever arrives first.
+
+    Identity is `normalize_invoice_identity` — the digit run, vendor not considered, the
+    same notion `registry` keys payments on. Two vendors independently numbering an
+    invoice `INV-1004` therefore collide here, and the hold is the *conservative* end of
+    that pre-existing ambiguity: payment idempotency already treats them as one
+    obligation and would pay only the first, so a human seeing both beats a silent single
+    payment. A vendor tiebreak (anticipated in `normalize_invoice_identity`'s own
+    docstring) would have to land there, for the whole system, not here alone.
     """
     by_identity: dict[str, list[tuple[str, str | None]]] = defaultdict(list)
 
@@ -65,7 +70,14 @@ def contested_documents(paths: Iterable[Path]) -> dict[str, str]:
     for identity, members in by_identity.items():
         if len(members) < 2:
             continue
-        if not any(revision is not None for _, revision in members):
+        # Two documents are only contested if they disagree about which is current.
+        # Distinct version claims — a revision alongside a non-revision, or two different
+        # revision labels — mean something has to choose between them. Two copies of the
+        # *same* revision claim make the same claim twice: that is an ordinary duplicate,
+        # reconciliation drops the redundant one, and holding them would block the
+        # unambiguously current invoice from ever paying.
+        claims = {revision for _, revision in members}
+        if len(claims) < 2 or claims == {None}:
             continue
 
         names = sorted(name for name, _ in members)
@@ -74,9 +86,9 @@ def contested_documents(paths: Iterable[Path]) -> dict[str, str]:
             role = f"revision {revision!r}" if revision is not None else "no revision stated"
             contested[name] = (
                 f"invoice {identity} arrived as {len(members)} documents in this batch "
-                f"({role} here, alongside {others}), at least one declaring itself a "
-                "revision. Which one is current is a human's call, not the file order's — "
-                "neither version pays automatically."
+                f"({role} here, alongside {others}), and they disagree about which is "
+                "current. That is a human's call, not the file order's — neither version "
+                "pays automatically."
             )
 
     return contested
@@ -91,12 +103,19 @@ def _peek(path: Path) -> tuple[str, str | None] | None:
     """
     if not path.is_file():
         return None
+    # A PDF can never be a structured format, and text-extracting one is the most
+    # expensive load in the batch — skipped by suffix here rather than by format after
+    # loading, so the pre-scan doesn't do pdfplumber's work twice for nothing. Every
+    # other suffix still goes through `load_document`, whose byte-sniffing is what
+    # catches a JSON payload in a `.txt` file.
+    if path.suffix.lower() == ".pdf":
+        return None
     try:
         document = load_document(path)
     except Exception:  # noqa: BLE001 — see the docstring
         return None
 
-    if document.format not in _STRUCTURED_FORMATS:
+    if document.format not in STRUCTURED_FORMATS:
         return None
 
     try:

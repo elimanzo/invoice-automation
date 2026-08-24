@@ -81,7 +81,10 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
             "is one — but invoice_1004_revised.json is in the same batch claiming to be "
             "the current version of INV-1004, so neither pays without a human "
             "(contested.py). Clean-and-under-threshold is not enough when the amount "
-            "itself is contested."
+            "itself is contested. This expectation is therefore load-bearing on the "
+            "sibling file's presence, the same way the 9005 pair's filenames are: point "
+            "run_eval at a directory holding only this document and it approves, "
+            "correctly, and scores as a disagreement."
         ),
     ),
     GoldenCase(

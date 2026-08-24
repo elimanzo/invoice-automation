@@ -31,6 +31,18 @@ from .models import DocumentFormat, Flag, FlagSeverity, Invoice
 _MM_DD_YYYY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
 
 
+STRUCTURED_FORMATS = frozenset(
+    {DocumentFormat.JSON, DocumentFormat.CSV, DocumentFormat.XML}
+)
+"""The formats this module parses without the model (ADR-0009).
+
+Defined here rather than at each call site: `graph._ingest` decides whether to parse
+deterministically from this set, and `contested.py`'s pre-scan decides whether it can
+read a document's identity at all from the same set. Those two answers must be the same
+one — a format added to the parser but not to the pre-scan would make revision
+collisions in it resolve by arrival order again, silently."""
+
+
 class StructuredParseFailed(Exception):
     """A structured document could not be parsed deterministically.
 

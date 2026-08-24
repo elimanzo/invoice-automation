@@ -18,10 +18,14 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from invoice_automation.batch import run_batch
 from invoice_automation.contested import CONTESTED_FLAG_CODE, contested_documents
 from invoice_automation.deps import Deps
+from invoice_automation.documents import load_document
 from invoice_automation.payments import RecordingPayment
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -136,3 +140,64 @@ def test_documents_needing_the_model_are_skipped_not_guessed_at(tmp_path: Path) 
     )
 
     assert contested_documents(sorted(directory.iterdir())) == {}
+
+def test_two_copies_of_one_revision_are_not_contested(deps: Deps, tmp_path: Path) -> None:
+    """Regression (code review of ADR-0013): the rule is *disagreement*, not "a revision
+    is present". Two copies of the same revision make the same claim twice — an ordinary
+    duplicate, which reconciliation drops. Holding them would block the unambiguously
+    current version of the invoice from ever paying, which is strictly worse than the bug
+    the pre-scan exists to fix."""
+    directory = _batch_dir(
+        tmp_path / "same-claim",
+        {"invoice_1004_revised.json": "copy_a.json"},
+    )
+    shutil.copy(INVOICES / "invoice_1004_revised.json", directory / "copy_b.json")
+
+    assert contested_documents(sorted(directory.iterdir())) == {}
+
+    summary = run_batch(directory, deps)
+
+    payment = deps.payment
+    assert isinstance(payment, RecordingPayment)
+    assert len(payment.payments) == 1  # paid once, for the revision's total
+    assert {item.outcome for item in summary.items} == {"approved"}
+
+
+def test_two_different_revisions_of_one_invoice_are_contested(deps: Deps, tmp_path: Path) -> None:
+    """The other side of the same rule: two documents both claiming to be the revision,
+    with different labels, disagree as sharply as a revision and an original do."""
+    payload = json.loads((INVOICES / "invoice_1004_revised.json").read_text(encoding="utf-8"))
+    directory = tmp_path / "two-revisions"
+    directory.mkdir()
+    for name, revision in (("r1.json", "R1"), ("r2.json", "R2")):
+        (directory / name).write_text(json.dumps({**payload, "revision": revision}), encoding="utf-8")
+
+    assert set(contested_documents(sorted(directory.iterdir()))) == {"r1.json", "r2.json"}
+
+    summary = run_batch(directory, deps)
+
+    payment = deps.payment
+    assert isinstance(payment, RecordingPayment)
+    assert payment.payments == []
+    assert {item.outcome for item in summary.items} == {"escalated"}
+
+
+def test_the_pre_scan_never_extracts_pdf_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A PDF cannot be a structured format, so the pre-scan must not pay for its text
+    extraction — the batch loop loads it again a moment later, and pdfplumber is the
+    slowest step in the whole run."""
+    directory = _batch_dir(
+        tmp_path / "with-pdf",
+        {"invoice_1004.json": "invoice_1004.json", "invoice_1011.pdf": "invoice_1011.pdf"},
+    )
+
+    loaded: list[str] = []
+
+    def _counting_load(path: Path) -> Any:
+        loaded.append(path.name)
+        return load_document(path)
+
+    monkeypatch.setattr("invoice_automation.contested.load_document", _counting_load)
+    contested_documents(sorted(directory.iterdir()))
+
+    assert loaded == ["invoice_1004.json"]

@@ -34,23 +34,37 @@ document is present and readable before the first one runs.
 ## Decision
 
 Before any document in a batch is processed, scan the whole directory for **contested
-submissions**: two or more documents claiming the same invoice identity where at least one
-declares itself a revision. Every document in such a group is held — a soft flag whose
-weight equals `RISK_ESCALATION_THRESHOLD`, so it forces escalation on its own — and a
-reviewer says which version is current.
+submissions**: two or more documents claiming the same invoice identity that *disagree
+about which of them is current* — a revision alongside a non-revision, or two different
+revision labels. Every document in such a group is held — a soft flag whose weight equals
+`RISK_ESCALATION_THRESHOLD`, so it forces escalation on its own — and a reviewer says which
+version is current.
 
 Three boundaries:
 
-1. **Only revisions contest.** Two documents for one invoice with no revision between them
-   are an ordinary duplicate or enrichment, and reconciliation already resolves those
-   correctly whichever arrives first (INV-1011, INV-1012). Holding them would convert a
-   solved case into manual work — the opposite of this system's purpose.
+1. **Only disagreement contests.** Documents making the same claim are an ordinary
+   duplicate or enrichment, and reconciliation already resolves those correctly whichever
+   arrives first (INV-1011, INV-1012). Holding them would convert a solved case into manual
+   work — the opposite of this system's purpose. The first version of this decision said
+   "at least one declares a revision", which caught two *copies of the same revision* and
+   blocked the unambiguously current invoice from ever paying — strictly worse than the bug
+   being fixed. Found in review; the rule is disagreement, pinned by
+   `test_two_copies_of_one_revision_are_not_contested`.
 2. **Escalated, not rejected.** One of the two totals is almost certainly owed. The system's
    failure here was guessing which, not paying at all.
 3. **Identity is read without the model.** Structured documents (JSON/CSV/XML) parse
    deterministically ([ADR-0009](0009-deterministic-parsing-for-structured-formats.md)), so
    their invoice number and `revision` field are free to inspect. A `.txt` or `.pdf`
-   document's identity is only known after extraction.
+   document's identity is only known after extraction. PDFs are skipped by suffix before
+   loading, not by format after: text-extracting one is the most expensive load in a batch,
+   and a PDF can never qualify anyway.
+
+Identity here is `normalize_invoice_identity` — the digit run, vendor not considered, the
+same notion `registry` keys payments on. Two vendors independently numbering an invoice
+`INV-1004` therefore collide, and the hold is the conservative end of that pre-existing
+ambiguity: payment idempotency already treats them as one obligation and would pay only
+whichever arrived first. A vendor tiebreak belongs in `normalize_invoice_identity`, for the
+whole system, not in this module alone.
 
 The flag is raised in the `reconcile` node rather than seeded into the graph's initial
 `flags`, because `_ingest`'s model path *replaces* that state key and would silently drop a
@@ -74,6 +88,12 @@ processing any of them — paying the model twice per document across the whole 
 a case the sample data does not contain and real AP mail would deliver as structured EDI or
 a PDF pair reconciliation already handles one document later. Revisited if a text-format
 revision ever shows up; the batch's own summary is where it would surface.
+
+**Bad.** A repeated revision label no longer takes reconciliation's revision path
+(`reconciliation.reconcile`), which is what makes two copies of one revision resolve as the
+duplicate they are instead of raising `RevisionAfterPayment` on the second. That is a
+correction to reconciliation's outcome ordering, not to this pre-scan — the pre-scan only
+made it visible.
 
 **Bad.** Two golden-set expectations changed (`evals.py`), one from "errors" to "escalated".
 The eval harness measures agreement against recorded ground truth, so ground truth that
