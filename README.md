@@ -16,24 +16,33 @@ full vocabulary; the numbers above are what every feature here is measured again
 ## What it does to those numbers
 
 `python main.py --invoice_dir=data/invoices`, over the 20 provided documents — 16 distinct
-invoices, the rest duplicates, PDF/text twins, and one revision:
+invoices, the rest duplicates, PDF/text twins, and one revision. Dollars are counted **per
+invoice, not per document**: one obligation is one number however many files describe it.
 
 | | |
 | ---- | ---- |
 | Paid with no human involved | **5 invoices, $27,225** |
-| Held for a reviewer, with the reason stated | 6 documents, $32,273 |
-| Refused outright | 7 documents, $190,626 |
+| Held for a reviewer, with the reason stated | 5 invoices, $30,383 |
+| Refused outright | 5 invoices, $168,313 — plus INV-1009, whose negative quantity is a data defect rather than an amount |
 | Findings behind those calls | 12 fatal, 30 soft, and 5 audited corrections to what the documents literally said |
-| Per invoice | **17 seconds** and **$0.017** of Grok tokens, against the 5-day, ~$20-per-invoice manual baseline |
+| Per document | **17 seconds** and **$0.017** of Grok tokens, against the 5-day, ~$20-per-invoice manual baseline |
 
-Cost and latency are measured, not modelled — the per-invoice figures come from a live Grok
-run's own traces (91 billed calls, $0.33 total), which is the same data the dashboard's
-drill-down shows per stage. Outcomes reproduce offline with no key.
+Cost and latency are measured, not modelled — those figures come from a live Grok run's own
+traces (91 billed calls, $0.33 for the batch), the same data the dashboard's drill-down shows
+per stage. Outcomes reproduce offline with no key.
 
-Read the straight-through rate carefully: this corpus is adversarial by construction — the
-brief's sample data exists to exercise failure modes, so roughly half of it carries a real
-defect. A production AP inbox is overwhelmingly clean, and the number that would move there
-is the $222,899 this run stopped *before* payment, not the 5 invoices it let past.
+Two things worth reading carefully before treating the dollar figures as a result:
+
+**The refused total is concentrated.** $100,000 of that $168,313 is one invoice — INV-1003,
+which bills a zero-stock `FakeItem` and is the corpus's deliberate fraud case. The remaining
+four refusals total $68,313. A single well-chosen test invoice is doing most of the work in
+that number, and it would be dishonest to present it as steady-state throughput.
+
+**The corpus is adversarial by construction.** The brief's sample data exists to exercise
+failure modes, so roughly half of it carries a real defect; a production AP inbox is
+overwhelmingly clean and the pass rate would invert. What generalises from this run is not
+the ratio — it is that **$198,696 did not move without a rule or a human authorising it**,
+and that the per-invoice cost of getting there was $0.017.
 
 ## Install
 
