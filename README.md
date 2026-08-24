@@ -13,6 +13,28 @@ one), and **payment** (mocked, idempotent) — with every judgment call recorded
 auditable correction, flag, or decision rather than a silent guess. `CONTEXT.md` has the
 full vocabulary; the numbers above are what every feature here is measured against.
 
+## What it does to those numbers
+
+`python main.py --invoice_dir=data/invoices`, over the 20 provided documents — 16 distinct
+invoices, the rest duplicates, PDF/text twins, and one revision:
+
+| | |
+| ---- | ---- |
+| Paid with no human involved | **5 invoices, $27,225** |
+| Held for a reviewer, with the reason stated | 6 documents, $32,273 |
+| Refused outright | 7 documents, $190,626 |
+| Findings behind those calls | 12 fatal, 30 soft, and 5 audited corrections to what the documents literally said |
+| Per invoice | **17 seconds** and **$0.017** of Grok tokens, against the 5-day, ~$20-per-invoice manual baseline |
+
+Cost and latency are measured, not modelled — the per-invoice figures come from a live Grok
+run's own traces (91 billed calls, $0.33 total), which is the same data the dashboard's
+drill-down shows per stage. Outcomes reproduce offline with no key.
+
+Read the straight-through rate carefully: this corpus is adversarial by construction — the
+brief's sample data exists to exercise failure modes, so roughly half of it carries a real
+defect. A production AP inbox is overwhelmingly clean, and the number that would move there
+is the $222,899 this run stopped *before* payment, not the 5 invoices it let past.
+
 ## Install
 
 ```bash
