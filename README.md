@@ -134,6 +134,28 @@ shows them on the sample data itself.
 python -m invoice_automation.web    # http://127.0.0.1:8000
 ```
 
+### The review queue
+
+![An escalated invoice in the review queue](docs/images/review-queue-contested.png)
+
+`invoice_1004_revised.json`, held. Two documents arrived for invoice INV-1004 and they
+disagree about which is current, so neither pays until a **reviewer** says which one is
+([ADR-0013](docs/adr/0013-contested-submissions-detected-before-the-batch-runs.md)). The
+**risk score** of 7 crossed the escalation threshold of 5 on soft flags alone — no single
+rule stopped this invoice. Every field is editable, and an edit writes a **correction**
+rather than overwriting silently ([ADR-0012](docs/adr/0012-reviewer-edits-via-checkpoint-update.md)).
+
+### One run, end to end
+
+![The drill-down for a rejected invoice](docs/images/run-drilldown.png)
+
+`invoice_1003.txt` — the $100,000 invoice from "Fraudster LLC" billing 100 units of an item
+Acme holds no stock of. Read the stage timings: **ingestion** took 8.5 seconds because the
+model read a text document and a **critic** checked it, while **validation** and **approval**
+took under a millisecond between them. That split is the whole design
+([ADR-0009](docs/adr/0009-deterministic-parsing-for-structured-formats.md)) — the model reads,
+deterministic code decides. Nothing here re-runs the pipeline; it is read from the saved trace.
+
 Pipeline view (with a click-to-upload control — pick one or several files from
 `data/demo_uploads/` to see it work immediately, or any of `data/invoices/`), ledger, and
 the review queue for escalated invoices. No Node toolchain
