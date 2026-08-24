@@ -25,12 +25,15 @@ invoice, not per document**: one obligation is one number however many files des
 | Held for a reviewer, with the reason stated | 5 invoices, $30,383 |
 | Refused outright | 5 invoices, $168,313 — plus INV-1009, whose negative quantity is a data defect rather than an amount |
 | Findings behind those calls | 12 fatal, 30 soft, and 5 audited corrections to what the documents literally said |
-| Per document | **17 seconds** and **$0.017** of Grok tokens, against the 5-day, ~$20-per-invoice manual baseline |
+| Per document | **9–17 seconds** and **$0.008–$0.017** of Grok tokens, against the 5-day, ~$20-per-invoice manual baseline |
 
 Outcomes are from the keyless run, which replays recorded responses and so is byte-stable —
-run it yourself and you get this table. Cost and latency come from a live Grok run's own
-traces (91 billed calls, $0.33 for the batch), the same data the dashboard's drill-down shows
-per stage.
+run it yourself and you get this table. Cost and latency come from two live Grok runs' own
+traces, the same data the dashboard's drill-down shows per stage. They differ (91 billed calls
+at $0.33 for one batch, roughly half that for another) because how many documents need the
+model depends on which formats arrive: a JSON **document** is already structured and never
+reaches it ([ADR-0009](docs/adr/0009-deterministic-parsing-for-structured-formats.md)). The
+range is the honest figure; a single number would be one batch presented as a law.
 
 A live run does not reproduce the table exactly, and that is worth stating rather than
 hiding. Measured against one: 17 of the 20 documents reach the same **decision**; three move
@@ -133,6 +136,20 @@ shows them on the sample data itself.
 ```bash
 python -m invoice_automation.web    # http://127.0.0.1:8000
 ```
+
+### The ledger
+
+![The ledger, with the impact strip above it](docs/images/ledger.png)
+
+Every **run**, filterable and sortable, over the impact strip. `$198,695.80` is money on
+invoices that carried a real finding and did not pay — keyed on **invoice**, so INV-1013's
+two documents count once, and excluding anything that paid despite a soft **flag**.
+
+This screenshot is a live Grok run. It reaches a different **decision** than the recorded
+replay on three of twenty documents, and stops the same $198,695.80 to the cent: the
+documents that moved went between escalated and rejected, and both of those mean the money
+stayed. What the model changes is how much scrutiny a borderline invoice attracts. What it
+does not change is which invoices are safe to pay.
 
 ### The review queue
 
