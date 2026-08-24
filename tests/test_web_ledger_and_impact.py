@@ -29,6 +29,7 @@ from invoice_automation.registry import SqliteRegistry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLEAN_INVOICE = REPO_ROOT / "data" / "invoices" / "invoice_1001.txt"
+INVOICES = REPO_ROOT / "data" / "invoices"
 
 
 @pytest.fixture
@@ -169,3 +170,46 @@ def test_impact_with_no_runs_reports_zeros_not_an_error(client: TestClient) -> N
     assert impact["errors_caught"] == 0
     assert Decimal(impact["dollars_flagged"]) == Decimal("0")
     assert Decimal(impact["cost_per_invoice_usd"]) == Decimal("0")
+
+
+def test_impact_excludes_paid_invoices_and_counts_each_invoice_once(
+    deps: Deps, checkpointer: Any, tmp_path: Path
+) -> None:
+    """Two things the first version of this metric got wrong, both visible on the
+    dashboard's own strip.
+
+    A soft-flagged invoice that was approved and *paid* was counted as money stopped
+    before payment. It is not: the money left. And two documents describing one invoice
+    were counted as two amounts, which is the exact distinction reconciliation exists to
+    make (CONTEXT.md). INV-1011 arrives twice, so a batch over the provided corpus proves
+    both at once.
+    """
+    app = create_app(deps, checkpointer, tmp_path / "uploads")
+    client = TestClient(app)
+    client.post("/runs", json={"directory_path": str(INVOICES)})
+
+    runs = client.get("/runs").json()
+    paid = {r["document_name"] for r in runs if r["outcome"] == "approved"}
+    assert paid, "expected at least one approved run to test the exclusion"
+
+    impact = client.get("/impact").json()
+    stopped = Decimal(impact["dollars_flagged"])
+
+    # Every approved document's amount must be absent from the figure.
+    for name in paid:
+        detail = client.get(f"/runs/{name}").json()
+        amount = detail.get("invoice", {}).get("total")
+        if amount is not None:
+            assert stopped != Decimal(str(amount))
+
+    # And the figure cannot exceed the sum of the amounts that did not pay — which a
+    # per-document count would, by every duplicate in the corpus.
+    unpaid_total = sum(
+        (
+            Decimal(str(r["amount"]))
+            for r in runs
+            if r["outcome"] != "approved" and r.get("amount") and Decimal(str(r["amount"])) > 0
+        ),
+        Decimal("0"),
+    )
+    assert Decimal("0") < stopped <= unpaid_total

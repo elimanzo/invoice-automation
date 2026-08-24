@@ -50,6 +50,7 @@ from .models import (
     Invoice,
     ToolCallRecord,
 )
+from .registry import normalize_invoice_identity
 from .tracing import LlmCallEvent, StageEvent, Tracer
 from .validation import VALIDATION_CORRECTION_FIELDS, VALIDATION_FLAG_CODES, validate_invoice
 
@@ -201,7 +202,13 @@ class ImpactSummary(BaseModel):
     avg_processing_ms: float
     manual_baseline_days: float
     errors_caught: int
+    """Non-info flags across every document processed. Counted per finding, not per
+    invoice — two documents for one invoice each raising a stock problem is two findings a
+    human would have had to read."""
     dollars_flagged: str
+    """Money on invoices that carried a real finding and did *not* pay, keyed on invoice
+    identity so one obligation counts once. Excludes invoices that were approved and paid
+    despite a soft flag: those are not money withheld."""
     cost_per_invoice_usd: str
     manual_cost_per_invoice_usd: str
 
@@ -690,8 +697,16 @@ def create_app(
 
         total_duration_ms = 0.0
         errors_caught = 0
-        dollars_flagged = Decimal("0")
         total_cost = Decimal("0")
+        # Keyed on invoice identity, not on document, and only for invoices that did not
+        # pay. The tile says "stopped before payment", so it must mean exactly that: an
+        # invoice carrying a soft flag that was approved and paid anyway is not money this
+        # system withheld, and two documents describing one obligation are one amount, not
+        # two (CONTEXT.md — reconciliation exists because those counts differ). Counting
+        # per document inflated this figure by every duplicate and every paid-but-flagged
+        # invoice in the batch.
+        held_by_identity: dict[str, Decimal] = {}
+        paid_identities: set[str] = set()
         for run_id, snapshot in runs:
             total_duration_ms += sum(
                 s.duration_ms for s in observed_deps.tracer.stages_for(run_id)
@@ -701,11 +716,32 @@ def create_app(
             flags = [Flag.model_validate(f) for f in snapshot.values.get("flags") or []]
             caught = [f for f in flags if f.severity != FlagSeverity.INFO]
             errors_caught += len(caught)
+
+            invoice = snapshot.values.get("invoice")
+            if invoice is None:
+                continue
+            # No invoice number means no identity to deduplicate on, so the document is
+            # its own key: it still represents money this system held, and dropping it
+            # would understate the figure for exactly the documents that read worst.
+            identity = normalize_invoice_identity(invoice.get("invoice_number")) or f"run:{run_id}"
+
+            payment = snapshot.values.get("payment")
+            if payment and payment.get("status") in {"success", "skipped"}:
+                paid_identities.add(identity)
+
             if caught:
-                invoice = snapshot.values.get("invoice")
-                total = invoice.get("total") if invoice else None
-                if total is not None:
-                    dollars_flagged += Decimal(str(total))
+                total = invoice.get("total")
+                if total is not None and Decimal(str(total)) > 0:
+                    # A negative total is a data-integrity defect (INV-1009's negative
+                    # quantity), not an amount of money withheld.
+                    held_by_identity[identity] = max(
+                        held_by_identity.get(identity, Decimal("0")), Decimal(str(total))
+                    )
+
+        dollars_flagged = sum(
+            (amount for identity, amount in held_by_identity.items() if identity not in paid_identities),
+            Decimal("0"),
+        )
 
         avg_processing_ms = total_duration_ms / invoices_processed if invoices_processed else 0.0
         cost_per_invoice = total_cost / invoices_processed if invoices_processed else Decimal("0")

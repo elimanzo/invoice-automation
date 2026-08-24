@@ -11,7 +11,11 @@ function formatSeconds(ms: number): string {
 
 function formatUsd(value: string): string {
   const n = Number(value);
-  return Number.isFinite(n) ? `$${n.toFixed(2)}` : value;
+  if (!Number.isFinite(n)) return value;
+  // A per-invoice token cost is fractions of a cent. Two decimal places renders $0.0167
+  // as "$0.01", which reads as a rounder, less credible number than the truth.
+  const places = n !== 0 && Math.abs(n) < 1 ? 4 : 2;
+  return `$${n.toFixed(places)}`;
 }
 
 export function ImpactStrip() {
@@ -37,7 +41,7 @@ export function ImpactStrip() {
       </div>
       <div className="impact-stat">
         <div className="impact-stat__value">{formatUsd(impact.dollars_flagged)}</div>
-        <div className="impact-stat__label">Dollars flagged before payment</div>
+        <div className="impact-stat__label">Dollars stopped before payment</div>
       </div>
       <div className="impact-stat">
         <div className="impact-stat__value">{formatUsd(impact.cost_per_invoice_usd)}</div>
