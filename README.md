@@ -27,9 +27,19 @@ invoice, not per document**: one obligation is one number however many files des
 | Findings behind those calls | 12 fatal, 30 soft, and 5 audited corrections to what the documents literally said |
 | Per document | **17 seconds** and **$0.017** of Grok tokens, against the 5-day, ~$20-per-invoice manual baseline |
 
-Cost and latency are measured, not modelled — those figures come from a live Grok run's own
+Outcomes are from the keyless run, which replays recorded responses and so is byte-stable —
+run it yourself and you get this table. Cost and latency come from a live Grok run's own
 traces (91 billed calls, $0.33 for the batch), the same data the dashboard's drill-down shows
-per stage. Outcomes reproduce offline with no key.
+per stage.
+
+A live run does not reproduce the table exactly, and that is worth stating rather than
+hiding. Measured against one: 17 of the 20 documents reach the same **decision**; three move
+(`invoice_1010.txt` and `invoice_1016.json` from escalated to rejected, `invoice_1012.txt`
+from approved to escalated). Every one of those moves is toward *more* caution, which is what
+the caution ratchet ([ADR-0004](docs/adr/0004-caution-ratchet-for-approval.md)) exists to
+guarantee — the model may add scrutiny and may never remove it. Payment was identical in both
+runs: the same 5 invoices, the same $27,225. What varies is how much extra scrutiny a
+borderline invoice attracts; what does not vary is which invoices are safe to pay.
 
 Two things worth reading carefully before treating the dollar figures as a result:
 
